@@ -1,4 +1,21 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Проверка обновлений
+    fetch('https://raw.githubusercontent.com/stillar1/speedmesh-pro/main/manifest.json', { cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => {
+            const currentVer = chrome.runtime.getManifest().version;
+            if (data.version && data.version !== currentVer) {
+                const banner = document.getElementById('update-banner');
+                if (banner) {
+                    banner.style.display = 'block';
+                    banner.onclick = () => {
+                        alert("Чтобы обновиться:\n1. Скачайте новый код с GitHub (Code -> Download ZIP)\n2. Замените папку расширения\n3. Нажмите кнопку 'Обновить' в chrome://extensions");
+                        chrome.tabs.create({ url: "https://github.com/stillar1/speedmesh-pro" });
+                    };
+                }
+            }
+        }).catch(e => console.log('Update check failed'));
+
     const toggles = [
         'autoGrader', 'highlightGrades', 'ktpModule', 'calcAttendance', 'calculatorMode', 'stickyMode', 
         'speedUp', 'apiSpyMode', 'architectMode', 'randomizerMode', 

@@ -15,12 +15,21 @@
         if (namespace === 'local') {
             if (changes.timerCustomTheme) customPrefs.timerCustomTheme = changes.timerCustomTheme.newValue;
             if (changes.timerCustomBg) customPrefs.timerCustomBg = changes.timerCustomBg.newValue;
+            
+            if (changes.timerOpacity) customPrefs.timerOpacity = changes.timerOpacity.newValue;
             if (changes.timerCustomText) customPrefs.timerCustomText = changes.timerCustomText.newValue;
         }
     });
 
     // 🎨 ЦВЕТОВЫЕ ТЕМЫ ДЛЯ ТАЙМЕРА (8 штук!)
     const themes = {
+        liquid_glass: {
+            bg: 'rgba(255, 255, 255, 0.1)', border: '1px solid rgba(255, 255, 255, 0.4)', text: '#ffffff', infoText: '#eaeaea',
+            breakDot: '#af52de', breakBar: 'rgba(255, 255, 255, 0.5)', lessonDot: '#ffffff', lessonBar: 'rgba(255, 255, 255, 0.3)',
+            warnDot: '#ff453a', warnBar: 'rgba(255, 255, 255, 0.5)', specDot: '#ff9f0a', specBar: 'rgba(255, 255, 255, 0.5)',
+            idleDot: '#ffffff', idleBar: 'rgba(255, 255, 255, 0.2)', noteBg: 'rgba(255, 255, 255, 0.2)', noteBorder: '1px solid rgba(255,255,255,0.4)', noteText: '#ffffff',
+            isLiquid: true
+        },
         apple_light: {
             bg: 'rgba(255, 255, 255, 0.25)', border: '1px solid rgba(255, 255, 255, 0.4)', text: '#000', infoText: '#333',
             breakDot: '#af52de', breakBar: 'rgba(175, 82, 222, 0.3)', lessonDot: '#34c759', lessonBar: 'rgba(52, 199, 89, 0.3)',
@@ -141,6 +150,26 @@
     const pad = n => n.toString().padStart(2, '0');
 
     function initDOM() {
+        if (!document.getElementById('mesh-timer-styles')) {
+            const style = document.createElement('style');
+            style.id = 'mesh-timer-styles';
+            style.innerHTML = `
+                .mesh-liquid-effect {
+                    box-shadow: inset 0 1px 1px rgba(255,255,255,0.5), 0 8px 32px rgba(0,0,0,0.3) !important;
+                    background-image: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,0.1) 100%) !important;
+                }
+                .mesh-liquid-effect::before {
+                    content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
+                    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
+                    transform: skewX(-20deg); animation: mesh-glare 6s infinite; z-index: -1;
+                }
+                @keyframes mesh-glare {
+                    0% { left: -100%; } 20% { left: 200%; } 100% { left: 200%; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
         if (document.getElementById('mesh-timer-card')) return;
         const card = document.createElement('div');
         card.id = 'mesh-timer-card';
@@ -168,6 +197,7 @@
                         <option value="hacker">Матрица</option>
 <option value="apple_light">Apple Glass (Светлая)</option>
                         <option value="apple_dark">Apple Glass (Темная)</option>
+                        <option value="liquid_glass">Liquid Glass (Отражения)</option>
                     </select>
                 </label>
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between; align-items:center;">Свой фон: <input type="color" id="mesh-timer-color-bg" style="width:24px; height:24px; border:none; background:none; cursor:pointer; padding:0;"></label>
@@ -175,6 +205,7 @@
                 <div style="height:1px; background:rgba(255,255,255,0.1); margin:4px 0;"></div>
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between;">Размер: <input type="range" id="mesh-timer-scale" min="0.5" max="2.0" step="0.1" value="1.0" style="width:80px;"></label>
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between;">Скругление: <input type="range" id="mesh-timer-radius" min="0" max="40" step="2" value="30" style="width:80px;"></label>
+                <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between;">Прозрачность: <input type="range" id="mesh-timer-opacity" min="0.0" max="1.0" step="0.1" value="0.5" style="width:80px;"></label>
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between;">Стекло: <input type="range" id="mesh-timer-glass" min="0" max="20" step="1" value="10" style="width:80px;"></label>
             </div>
 
@@ -237,7 +268,14 @@
                 });
             };
 
-            document.getElementById('mesh-timer-glass').oninput = (e) => {
+            
+            chrome.storage.local.get(['timerOpacity'], (d) => {
+                if (d.timerOpacity !== undefined) { document.getElementById('mesh-timer-opacity').value = d.timerOpacity; }
+            });
+            document.getElementById('mesh-timer-opacity').oninput = (e) => {
+                chrome.storage.local.set({timerOpacity: parseFloat(e.target.value)});
+            };
+document.getElementById('mesh-timer-glass').oninput = (e) => {
                 inner.style.backdropFilter = `blur(${e.target.value}px) saturate(180%)`;
                 chrome.storage.local.set({timerGlass: e.target.value});
             };
@@ -290,11 +328,29 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
         const activeThemeStr = customPrefs.timerCustomTheme || currentTheme || 'default';
         const th = themes[activeThemeStr] || themes.default;
         
+
         let applyBg = th.bg;
         if (customPrefs.timerCustomBg) { applyBg = customPrefs.timerCustomBg + '80'; }
-        let applyText = customPrefs.timerCustomText || th.text;
+        
+        // Apply custom opacity if set
+        if (customPrefs.timerOpacity !== undefined) {
+            // Replace the alpha value in rgba
+            if (applyBg.startsWith('rgba')) {
+                applyBg = applyBg.replace(/[^,]+(?=\))/, ` ${customPrefs.timerOpacity}`);
+            } else if (applyBg.startsWith('#') && applyBg.length === 9) {
+                // Hex with alpha #RRGGBBAA
+                let alphaHex = Math.round(customPrefs.timerOpacity * 255).toString(16).padStart(2, '0');
+                applyBg = applyBg.substring(0, 7) + alphaHex;
+            }
+        }
+        
+        const innerEl = document.getElementById('mesh-timer-inner');
+        innerEl.style.background = applyBg;
+        
+        if (th.isLiquid) innerEl.classList.add('mesh-liquid-effect');
+        else innerEl.classList.remove('mesh-liquid-effect');
 
-        document.getElementById('mesh-timer-inner').style.background = applyBg;
+        let applyText = customPrefs.timerCustomText || th.text;
         document.getElementById('mesh-timer-inner').style.border = th.border;
         document.getElementById('mesh-timer-val').style.color = applyText;
         document.getElementById('mesh-timer-info').style.color = customPrefs.timerCustomText || th.infoText;
