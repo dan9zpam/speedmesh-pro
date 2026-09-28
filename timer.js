@@ -8,7 +8,7 @@
     let currentTheme = 'default';
     
     let customPrefs = {};
-    chrome.storage.local.get(['timerCustomTheme', 'timerCustomBg', 'timerCustomText'], (d) => {
+    chrome.storage.local.get(['timerCustomTheme', 'timerCustomBg', 'timerCustomText', 'timerOpacity'], (d) => {
         customPrefs = d || {};
     });
     chrome.storage.onChanged.addListener((changes, namespace) => {
@@ -172,7 +172,7 @@
                     0% { left: -100%; } 20% { left: 200%; } 100% { left: 200%; }
                 }
                 #mesh-timer-inner {
-                    transition: transform 0.3s, border-radius 0.3s; /* Убрали all, чтобы ползунки не лагали */
+                    transition: border-radius 0.3s; /* Убрали all, чтобы ползунки не лагали */
                 }
  20% { left: 200%; } 100% { left: 200%; }
                 }
@@ -185,7 +185,7 @@
         card.id = 'mesh-timer-card';
         card.style.cssText = `position: fixed; top: 15px; right: 350px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 6px; cursor: move; user-select: none; align-items: flex-end; transition: 0.3s;`;
         card.innerHTML = `
-            <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; transform-origin: top right;">
+            <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; ">
                 <div id="mesh-timer-bg" style="position:absolute; top:0; left:0; height:100%; width:0%; z-index:0; transition:width 1s linear, background 0.3s;"></div>
                 <div style="position:relative; z-index:2; display:flex; align-items:center; gap:8px;">
                     <div id="mesh-timer-dot" style="width:10px; height:10px; border-radius:50%; transition: all 0.3s;"></div>
@@ -241,13 +241,13 @@
             }
             
             chrome.storage.local.get(['timerScale', 'timerRadius', 'timerGlass'], (d) => {
-                if (d.timerScale) { inner.style.transform = `scale(${d.timerScale})`; document.getElementById('mesh-timer-scale').value = d.timerScale; }
+                if (d.timerScale) { inner.style.zoom = d.timerScale; document.getElementById('mesh-timer-scale').value = d.timerScale; }
                 if (d.timerRadius) { inner.style.borderRadius = `${d.timerRadius}px`; note.style.borderRadius = `${Math.max(4, d.timerRadius-10)}px`; document.getElementById('mesh-timer-radius').value = d.timerRadius; }
                 if (d.timerGlass) { inner.style.backdropFilter = `blur(${d.timerGlass}px) saturate(180%)`; document.getElementById('mesh-timer-glass').value = d.timerGlass; }
             });
             
             document.getElementById('mesh-timer-scale').oninput = (e) => {
-                inner.style.transform = `scale(${e.target.value})`;
+                inner.style.zoom = e.target.value;
                 chrome.storage.local.set({timerScale: e.target.value});
             };
             document.getElementById('mesh-timer-radius').oninput = (e) => {
@@ -256,7 +256,7 @@
                 chrome.storage.local.set({timerRadius: e.target.value});
             };
             
-            chrome.storage.local.get(['timerCustomTheme', 'timerCustomBg', 'timerCustomText'], (d) => {
+            chrome.storage.local.get(['timerCustomTheme', 'timerCustomBg', 'timerCustomText', 'timerOpacity'], (d) => {
                 if (d.timerCustomTheme) { document.getElementById('mesh-timer-theme-select').value = d.timerCustomTheme; }
                 if (d.timerCustomBg) { document.getElementById('mesh-timer-color-bg').value = d.timerCustomBg; }
                 if (d.timerCustomText) { document.getElementById('mesh-timer-color-text').value = d.timerCustomText; }
@@ -266,9 +266,20 @@
             
             
             document.getElementById('mesh-timer-reset-colors').onclick = () => {
-                chrome.storage.local.remove(['timerCustomBg', 'timerCustomText'], () => {
+                chrome.storage.local.remove(['timerCustomBg', 'timerCustomText', 'timerOpacity', 'timerScale', 'timerRadius', 'timerGlass', 'timerCustomTheme'], () => {
                     document.getElementById('mesh-timer-color-bg').value = '#000000';
                     document.getElementById('mesh-timer-color-text').value = '#000000';
+                    document.getElementById('mesh-timer-theme-select').value = 'default';
+                    document.getElementById('mesh-timer-opacity').value = '0.5';
+                    document.getElementById('mesh-timer-scale').value = '1.0';
+                    document.getElementById('mesh-timer-radius').value = '30';
+                    document.getElementById('mesh-timer-glass').value = '10';
+                    
+                    customPrefs = {};
+                    inner.style.zoom = '1.0';
+                    inner.style.borderRadius = `30px`;
+                    inner.style.backdropFilter = `blur(10px) saturate(180%)`;
+                    updateTimer();
                 });
             };
 
