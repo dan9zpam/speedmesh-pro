@@ -22,7 +22,7 @@
     // 🎨 ЦВЕТОВЫЕ ТЕМЫ ДЛЯ ТАЙМЕРА (8 штук!)
     const themes = {
         default: {
-            bg: 'rgba(15, 23, 42, 0.9)', border: '1px solid rgba(255, 255, 255, 0.1)', text: '#fff', infoText: '#cbd5e1',
+            bg: 'rgba(15, 23, 42, 0.5)', border: '1px solid rgba(255, 255, 255, 0.1)', text: '#fff', infoText: '#cbd5e1',
             breakDot: '#8b5cf6', breakBar: 'rgba(139, 92, 246, 0.3)', lessonDot: '#10b981', lessonBar: 'rgba(16, 185, 129, 0.3)',
             warnDot: '#ef4444', warnBar: 'rgba(239, 68, 68, 0.3)', specDot: '#f59e0b', specBar: 'rgba(245, 158, 11, 0.3)',
             idleDot: '#64748b', idleBar: 'rgba(100, 116, 139, 0.3)', noteBg: 'rgba(15, 23, 42, 0.85)', noteBorder: '1px solid rgba(139, 92, 246, 0.5)', noteText: '#e2e8f0'
@@ -34,7 +34,7 @@
             idleDot: '#94a3b8', idleBar: 'rgba(148, 163, 184, 0.2)', noteBg: 'rgba(255, 255, 255, 0.4)', noteBorder: '1px solid #94a3b8', noteText: '#334155'
         },
         hacker: {
-            bg: 'rgba(0, 0, 0, 0.95)', border: '1px solid #22c55e', text: '#22c55e', infoText: '#16a34a',
+            bg: 'rgba(0, 0, 0, 0.5)', border: '1px solid #22c55e', text: '#22c55e', infoText: '#16a34a',
             breakDot: '#22c55e', breakBar: 'rgba(34, 197, 94, 0.2)', lessonDot: '#22c55e', lessonBar: 'rgba(34, 197, 94, 0.2)',
             warnDot: '#22c55e', warnBar: 'rgba(34, 197, 94, 0.2)', specDot: '#22c55e', specBar: 'rgba(34, 197, 94, 0.2)',
             idleDot: '#064e3b', idleBar: 'rgba(6, 78, 59, 0.2)', noteBg: 'rgba(0, 0, 0, 0.9)', noteBorder: '1px solid #16a34a', noteText: '#22c55e'
