@@ -16,13 +16,12 @@
         apiLog = {}; // Если память повреждена, начинаем с чистого листа
     }
 
-    window.fetch = async function(...args) {
+    window.fetch = function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
         const method = args[1] && args[1].method ? args[1].method.toUpperCase() : 'GET';
 
-        const response = await originalFetch.apply(this, args);
-        
-        if (window.sessionStorage.getItem('MESH_SPY_ENABLED') === 'true') {
+        return originalFetch.apply(this, args).then(response => {
+            if (window.sessionStorage.getItem('MESH_SPY_ENABLED') === 'true') {
             if (url.includes('/api/')) { 
                 try {
                     const clone = response.clone();
@@ -64,6 +63,7 @@
             }
         }
         return response;
+        });
     };
 
     let spyPanel = null;
