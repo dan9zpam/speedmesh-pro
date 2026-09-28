@@ -6,6 +6,18 @@
     let customSchedule = null;
     let timerNoteStr = "";
     let currentTheme = 'default';
+    
+    let customPrefs = {};
+    chrome.storage.local.get(['timerCustomTheme', 'timerCustomBg', 'timerCustomText'], (d) => {
+        customPrefs = d || {};
+    });
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+        if (namespace === 'local') {
+            if (changes.timerCustomTheme) customPrefs.timerCustomTheme = changes.timerCustomTheme.newValue;
+            if (changes.timerCustomBg) customPrefs.timerCustomBg = changes.timerCustomBg.newValue;
+            if (changes.timerCustomText) customPrefs.timerCustomText = changes.timerCustomText.newValue;
+        }
+    });
 
     // 🎨 ЦВЕТОВЫЕ ТЕМЫ ДЛЯ ТАЙМЕРА (8 штук!)
     const themes = {
