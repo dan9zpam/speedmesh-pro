@@ -154,17 +154,27 @@
             const style = document.createElement('style');
             style.id = 'mesh-timer-styles';
             style.innerHTML = `
+                
                 .mesh-liquid-effect {
                     box-shadow: inset 0 1px 1px rgba(255,255,255,0.5), 0 8px 32px rgba(0,0,0,0.3) !important;
-                    background-image: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,0.1) 100%) !important;
                 }
                 .mesh-liquid-effect::before {
                     content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
-                    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
-                    transform: skewX(-20deg); animation: mesh-glare 6s infinite; z-index: -1;
+                    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 100%);
+                    transform: skewX(-20deg); animation: mesh-glare 4s infinite; z-index: 0; pointer-events: none;
+                }
+                .mesh-liquid-effect::after {
+                    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+                    background-image: linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 40%, rgba(255,255,255,0) 60%, rgba(255,255,255,0.1) 100%);
+                    z-index: 0; pointer-events: none;
                 }
                 @keyframes mesh-glare {
                     0% { left: -100%; } 20% { left: 200%; } 100% { left: 200%; }
+                }
+                #mesh-timer-inner {
+                    transition: transform 0.3s, border-radius 0.3s; /* Убрали all, чтобы ползунки не лагали */
+                }
+ 20% { left: 200%; } 100% { left: 200%; }
                 }
             `;
             document.head.appendChild(style);
@@ -177,7 +187,7 @@
         card.innerHTML = `
             <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; transform-origin: top right;">
                 <div id="mesh-timer-bg" style="position:absolute; top:0; left:0; height:100%; width:0%; z-index:0; transition:width 1s linear, background 0.3s;"></div>
-                <div style="position:relative; z-index:1; display:flex; align-items:center; gap:8px;">
+                <div style="position:relative; z-index:2; display:flex; align-items:center; gap:8px;">
                     <div id="mesh-timer-dot" style="width:10px; height:10px; border-radius:50%; transition: all 0.3s;"></div>
                     <div id="mesh-timer-val" style="font-family:monospace; font-size:16px; font-weight:bold; letter-spacing:0.5px; width:55px; transition: color 0.3s;">--:--</div>
                     <div id="mesh-timer-info" style="font-size:12px; font-weight:600; white-space:nowrap; transition: color 0.3s;">Загрузка...</div>
@@ -252,15 +262,9 @@
                 if (d.timerCustomText) { document.getElementById('mesh-timer-color-text').value = d.timerCustomText; }
             });
 
-            document.getElementById('mesh-timer-theme-select').onchange = (e) => {
-                chrome.storage.local.set({timerCustomTheme: e.target.value});
-            };
-            document.getElementById('mesh-timer-color-bg').oninput = (e) => {
-                chrome.storage.local.set({timerCustomBg: e.target.value});
-            };
-            document.getElementById('mesh-timer-color-text').oninput = (e) => {
-                chrome.storage.local.set({timerCustomText: e.target.value});
-            };
+            
+            
+            
             document.getElementById('mesh-timer-reset-colors').onclick = () => {
                 chrome.storage.local.remove(['timerCustomBg', 'timerCustomText'], () => {
                     document.getElementById('mesh-timer-color-bg').value = '#000000';
@@ -272,13 +276,33 @@
             chrome.storage.local.get(['timerOpacity'], (d) => {
                 if (d.timerOpacity !== undefined) { document.getElementById('mesh-timer-opacity').value = d.timerOpacity; }
             });
-            document.getElementById('mesh-timer-opacity').oninput = (e) => {
-                chrome.storage.local.set({timerOpacity: parseFloat(e.target.value)});
+            
+
+                    document.getElementById('mesh-timer-opacity').oninput = (e) => {
+                customPrefs.timerOpacity = parseFloat(e.target.value);
+                chrome.storage.local.set({timerOpacity: customPrefs.timerOpacity});
+                updateTimer(); // Моментальное обновление без лагов
             };
-document.getElementById('mesh-timer-glass').oninput = (e) => {
+            document.getElementById('mesh-timer-glass').oninput = (e) => {
                 inner.style.backdropFilter = `blur(${e.target.value}px) saturate(180%)`;
                 chrome.storage.local.set({timerGlass: e.target.value});
             };
+            document.getElementById('mesh-timer-color-bg').oninput = (e) => {
+                customPrefs.timerCustomBg = e.target.value;
+                chrome.storage.local.set({timerCustomBg: e.target.value});
+                updateTimer();
+            };
+            document.getElementById('mesh-timer-color-text').oninput = (e) => {
+                customPrefs.timerCustomText = e.target.value;
+                chrome.storage.local.set({timerCustomText: e.target.value});
+                updateTimer();
+            };
+            document.getElementById('mesh-timer-theme-select').onchange = (e) => {
+                customPrefs.timerCustomTheme = e.target.value;
+                chrome.storage.local.set({timerCustomTheme: e.target.value});
+                updateTimer();
+            };
+
         }, 100);
 
         document.body.appendChild(card);
@@ -345,7 +369,7 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
         }
         
         const innerEl = document.getElementById('mesh-timer-inner');
-        innerEl.style.background = applyBg;
+        innerEl.style.backgroundColor = applyBg;
         
         if (th.isLiquid) innerEl.classList.add('mesh-liquid-effect');
         else innerEl.classList.remove('mesh-liquid-effect');
