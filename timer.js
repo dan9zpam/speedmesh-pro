@@ -21,6 +21,18 @@
 
     // 🎨 ЦВЕТОВЫЕ ТЕМЫ ДЛЯ ТАЙМЕРА (8 штук!)
     const themes = {
+        apple_light: {
+            bg: 'rgba(255, 255, 255, 0.25)', border: '1px solid rgba(255, 255, 255, 0.4)', text: '#000', infoText: '#333',
+            breakDot: '#af52de', breakBar: 'rgba(175, 82, 222, 0.3)', lessonDot: '#34c759', lessonBar: 'rgba(52, 199, 89, 0.3)',
+            warnDot: '#ff3b30', warnBar: 'rgba(255, 59, 48, 0.3)', specDot: '#ff9500', specBar: 'rgba(255, 149, 0, 0.3)',
+            idleDot: '#8e8e93', idleBar: 'rgba(142, 142, 147, 0.3)', noteBg: 'rgba(255, 255, 255, 0.4)', noteBorder: '1px solid rgba(255,255,255,0.5)', noteText: '#000'
+        },
+        apple_dark: {
+            bg: 'rgba(40, 40, 40, 0.3)', border: '1px solid rgba(255, 255, 255, 0.15)', text: '#fff', infoText: '#ccc',
+            breakDot: '#bf5af2', breakBar: 'rgba(191, 90, 242, 0.3)', lessonDot: '#32d74b', lessonBar: 'rgba(50, 215, 75, 0.3)',
+            warnDot: '#ff453a', warnBar: 'rgba(255, 69, 58, 0.3)', specDot: '#ff9f0a', specBar: 'rgba(255, 159, 10, 0.3)',
+            idleDot: '#98989d', idleBar: 'rgba(152, 152, 157, 0.3)', noteBg: 'rgba(60, 60, 60, 0.4)', noteBorder: '1px solid rgba(255,255,255,0.2)', noteText: '#fff'
+        },
         default: {
             bg: 'rgba(15, 23, 42, 0.5)', border: '1px solid rgba(255, 255, 255, 0.1)', text: '#fff', infoText: '#cbd5e1',
             breakDot: '#8b5cf6', breakBar: 'rgba(139, 92, 246, 0.3)', lessonDot: '#10b981', lessonBar: 'rgba(16, 185, 129, 0.3)',
@@ -134,7 +146,7 @@
         card.id = 'mesh-timer-card';
         card.style.cssText = `position: fixed; top: 15px; right: 350px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 6px; cursor: move; user-select: none; align-items: flex-end; transition: 0.3s;`;
         card.innerHTML = `
-            <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; transform-origin: top right;">
+            <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; transform-origin: top right;">
                 <div id="mesh-timer-bg" style="position:absolute; top:0; left:0; height:100%; width:0%; z-index:0; transition:width 1s linear, background 0.3s;"></div>
                 <div style="position:relative; z-index:1; display:flex; align-items:center; gap:8px;">
                     <div id="mesh-timer-dot" style="width:10px; height:10px; border-radius:50%; transition: all 0.3s;"></div>
@@ -154,6 +166,8 @@
                         <option value="default">Неоновый космос</option>
                         <option value="minimal">Светлый минимализм</option>
                         <option value="hacker">Матрица</option>
+<option value="apple_light">Apple Glass (Светлая)</option>
+                        <option value="apple_dark">Apple Glass (Темная)</option>
                     </select>
                 </label>
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between; align-items:center;">Свой фон: <input type="color" id="mesh-timer-color-bg" style="width:24px; height:24px; border:none; background:none; cursor:pointer; padding:0;"></label>
@@ -164,7 +178,7 @@
                 <label style="color:#aaa; font-size:10px; display:flex; justify-content:space-between;">Стекло: <input type="range" id="mesh-timer-glass" min="0" max="20" step="1" value="10" style="width:80px;"></label>
             </div>
 
-            <div id="mesh-timer-note-box" style="display: none; border-radius: 12px; padding: 4px 12px; font-size: 11px; text-align: center; backdrop-filter: blur(10px); box-shadow: 0 4px 15px rgba(0,0,0,0.2); max-width: 250px; word-wrap: break-word; transition: all 0.3s; margin-top:6px;">
+            <div id="mesh-timer-note-box" style="display: none; border-radius: 12px; padding: 4px 12px; font-size: 11px; text-align: center; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.2); max-width: 250px; word-wrap: break-word; transition: all 0.3s; margin-top:6px;">
                 <span id="mesh-timer-note-text" style="font-weight: 600; transition: color 0.3s;"></span>
             </div>
         `;
@@ -188,7 +202,7 @@
             chrome.storage.local.get(['timerScale', 'timerRadius', 'timerGlass'], (d) => {
                 if (d.timerScale) { inner.style.transform = `scale(${d.timerScale})`; document.getElementById('mesh-timer-scale').value = d.timerScale; }
                 if (d.timerRadius) { inner.style.borderRadius = `${d.timerRadius}px`; note.style.borderRadius = `${Math.max(4, d.timerRadius-10)}px`; document.getElementById('mesh-timer-radius').value = d.timerRadius; }
-                if (d.timerGlass) { inner.style.backdropFilter = `blur(${d.timerGlass}px)`; inner.style.webkitBackdropFilter = `blur(${d.timerGlass}px)`; document.getElementById('mesh-timer-glass').value = d.timerGlass; }
+                if (d.timerGlass) { inner.style.backdropFilter = `blur(${d.timerGlass}px) saturate(180%)`; document.getElementById('mesh-timer-glass').value = d.timerGlass; }
             });
             
             document.getElementById('mesh-timer-scale').oninput = (e) => {
@@ -224,7 +238,7 @@
             };
 
             document.getElementById('mesh-timer-glass').oninput = (e) => {
-                inner.style.backdropFilter = `blur(${e.target.value}px)`; inner.style.webkitBackdropFilter = `blur(${e.target.value}px)`;
+                inner.style.backdropFilter = `blur(${e.target.value}px) saturate(180%)`;
                 chrome.storage.local.set({timerGlass: e.target.value});
             };
         }, 100);
