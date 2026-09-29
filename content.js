@@ -78,6 +78,10 @@ chrome.runtime.onMessage.addListener((req) => {
         extSettings = { ...extSettings, ...req.settings };
         if (extSettings.autoGrader === false) removePhantomsAndPanel();
     }
+    if (req.action === "rollbackData") {
+        localStorage.removeItem('MESH_ACHIEVEMENTS_PRO');
+        localStorage.removeItem('MESH_ARCHITECT_RULES');
+    }
 });
 
 document.addEventListener('keydown', (e) => {

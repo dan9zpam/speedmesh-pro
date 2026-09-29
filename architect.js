@@ -1,7 +1,7 @@
 // ==========================================
 // 🛠️ MESH Architect v2.1 (Dynamic Load & Safe Exit)
 // ==========================================
-(function() {
+(async function() {
     console.log("🛠️ MESH Architect v2.1: Менеджер стилей загружен");
 
     let isActive = false;
@@ -12,13 +12,26 @@
 
     // Загружаем сохраненные правила
     try {
-        const saved = localStorage.getItem('MESH_ARCHITECT_RULES');
-        if (saved) rules = JSON.parse(saved);
+        const result = await chrome.storage.local.get(['MESH_ARCHITECT_RULES']);
+        if (result.MESH_ARCHITECT_RULES) {
+            rules = result.MESH_ARCHITECT_RULES;
+        } else {
+            const saved = localStorage.getItem('MESH_ARCHITECT_RULES');
+            if (saved) rules = JSON.parse(saved);
+        }
+        applyRules(); // Применяем правила сразу после загрузки
     } catch(e) {}
 
     // Функция сохранения и применения правил
-    function saveRules() {
+    async function saveRules() {
+        try {
+            const result = await chrome.storage.local.get(['MESH_ARCHITECT_RULES']);
+            if (result.MESH_ARCHITECT_RULES) {
+                rules = { ...result.MESH_ARCHITECT_RULES, ...rules };
+            }
+        } catch(e) {}
         localStorage.setItem('MESH_ARCHITECT_RULES', JSON.stringify(rules));
+        await chrome.storage.local.set({ 'MESH_ARCHITECT_RULES': rules });
         applyRules();
         if (isActive) renderManagerPanel(); 
     }

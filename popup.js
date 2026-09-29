@@ -155,4 +155,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-trophies')?.addEventListener('click', () => { 
         notifyContentScript({ action: 'showTrophies' }); 
     });
+
+    document.getElementById('btn-rollback')?.addEventListener('click', async () => {
+        if (confirm('Сбросить все настройки, достижения и оформление до исходного состояния?')) {
+            await chrome.storage.local.clear();
+            await chrome.storage.sync.clear();
+            notifyContentScript({ action: 'rollbackData' });
+            showToast("🔄 Откат завершен!");
+            setTimeout(() => {
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (tabs[0] && tabs[0].url.includes('mos.ru')) {
+                        chrome.tabs.reload(tabs[0].id);
+                    }
+                });
+            }, 1000);
+        }
+    });
 });

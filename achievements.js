@@ -1,21 +1,37 @@
 // ==========================================
 // 🏆 MESH Achievements (Vaporwave Edition - 120 Badges & Modal UI)
 // ==========================================
-(function() {
+(async function() {
     console.log("🌴 MESH Achievements: Движок (120 Ачивок) активирован!");
 
     let stats = { totalGrades: 0, totalDays: 0, lastDate: null, streak: 0, unlocked: {} };
     try {
-        const saved = localStorage.getItem('MESH_ACHIEVEMENTS_PRO');
-        if (saved) { stats = JSON.parse(saved); if (!stats.streak) stats.streak = 0; }
+        const result = await chrome.storage.local.get(['MESH_ACHIEVEMENTS_PRO']);
+        if (result.MESH_ACHIEVEMENTS_PRO) {
+            stats = result.MESH_ACHIEVEMENTS_PRO;
+        } else {
+            const saved = localStorage.getItem('MESH_ACHIEVEMENTS_PRO');
+            if (saved) { stats = JSON.parse(saved); }
+        }
+        if (!stats.streak) stats.streak = 0;
         if (!stats.unlocked) stats.unlocked = {};
+        
+        // Save back to chrome.storage.local if we just loaded from localStorage
+        if (!result.MESH_ACHIEVEMENTS_PRO) chrome.storage.local.set({ 'MESH_ACHIEVEMENTS_PRO': stats });
     } catch(e) {}
 
-    function saveStats() {
+    async function saveStats() {
+        try {
+            const result = await chrome.storage.local.get(['MESH_ACHIEVEMENTS_PRO']);
+            if (result.MESH_ACHIEVEMENTS_PRO) {
+                // Merge in-memory stats with storage stats to avoid overwriting changes from other tabs
+                stats = { ...result.MESH_ACHIEVEMENTS_PRO, ...stats };
+                stats.unlocked = { ...result.MESH_ACHIEVEMENTS_PRO.unlocked, ...stats.unlocked };
+            }
+        } catch(e) {}
         localStorage.setItem('MESH_ACHIEVEMENTS_PRO', JSON.stringify(stats));
-        chrome.storage.local.set({ 'MESH_ACHIEVEMENTS_PRO': stats });
+        await chrome.storage.local.set({ 'MESH_ACHIEVEMENTS_PRO': stats });
     }
-    chrome.storage.local.set({ 'MESH_ACHIEVEMENTS_PRO': stats });
 
     const BADGES = {
         'hacker_man': { i: '💻', t: 'Хакер', d: 'Взломали систему (использовали сканер).' },
@@ -327,17 +343,17 @@
         setTimeout(() => { toast.style.transform = 'translateX(150%)'; setTimeout(() => toast.remove(), 600); }, 6000);
     }
 
-    function unlockBadge(badgeId) {
+    async function unlockBadge(badgeId) {
         if (!stats.unlocked[badgeId] && BADGES[badgeId]) {
             stats.unlocked[badgeId] = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); 
-            saveStats(); showVaporwaveToast(BADGES[badgeId]);
+            await saveStats(); showVaporwaveToast(BADGES[badgeId]);
             let count = Object.keys(stats.unlocked).length;
-            if (count === 10) unlockBadge('ambassador');
-            if (count === 50) unlockBadge('collector');
-            if (count === 75) unlockBadge('hoarder');
-            if (count === 100) unlockBadge('century_club');
-            if (count === 120) unlockBadge('completionist');
-            if (count === Object.keys(BADGES).length - 1) unlockBadge('absolute_god'); 
+            if (count === 10) await unlockBadge('ambassador');
+            if (count === 50) await unlockBadge('collector');
+            if (count === 75) await unlockBadge('hoarder');
+            if (count === 100) await unlockBadge('century_club');
+            if (count === 120) await unlockBadge('completionist');
+            if (count === Object.keys(BADGES).length - 1) await unlockBadge('absolute_god'); 
         }
     }
 
