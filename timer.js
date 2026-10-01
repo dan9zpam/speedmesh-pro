@@ -174,8 +174,6 @@
                 #mesh-timer-inner {
                     transition: border-radius 0.3s; /* Убрали all, чтобы ползунки не лагали */
                 }
- 20% { left: 200%; } 100% { left: 200%; }
-                }
             `;
             document.head.appendChild(style);
         }
