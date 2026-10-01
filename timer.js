@@ -348,7 +348,17 @@
             }
         });
 chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
-            if (data.timerLeft && data.timerTop) { card.style.right = 'auto'; card.style.left = data.timerLeft; card.style.top = data.timerTop; }
+            if (data.timerLeft && data.timerTop) { 
+                let left = parseInt(data.timerLeft, 10);
+                let top = parseInt(data.timerTop, 10);
+                if (left < 0) left = 15;
+                if (left > window.innerWidth - 50) left = window.innerWidth - 300;
+                if (top < 0) top = 15;
+                if (top > window.innerHeight - 50) top = 15;
+                card.style.right = 'auto'; 
+                card.style.left = left + 'px'; 
+                card.style.top = top + 'px'; 
+            }
         });
 
         
@@ -378,7 +388,7 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
         }
         
         const innerEl = document.getElementById('mesh-timer-inner');
-        innerEl.style.backgroundColor = applyBg;
+        innerEl.style.background = applyBg;
         
         if (th.isLiquid) innerEl.classList.add('mesh-liquid-effect');
         else innerEl.classList.remove('mesh-liquid-effect');
