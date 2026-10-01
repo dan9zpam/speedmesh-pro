@@ -30,6 +30,20 @@
         "*://*.dnevnik.mos.ru/*"
       ],
       "js": [
+        "date_spoof.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://school.mos.ru/*",
+        "*://*.school.mos.ru/*",
+        "*://dnevnik.mos.ru/*",
+        "*://*.dnevnik.mos.ru/*"
+      ],
+      "js": [
         "speedup.js"
       ],
       "run_at": "document_start",

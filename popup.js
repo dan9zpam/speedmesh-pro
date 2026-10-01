@@ -171,4 +171,59 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 1000);
         }
     });
+
+    // --- МАШИНА ВРЕМЕНИ (Подмена даты) ---
+    const dateInput = document.getElementById('fakeDate');
+    const saveDateBtn = document.getElementById('saveDateBtn');
+    const resetDateBtn = document.getElementById('resetDateBtn');
+
+    if (dateInput && saveDateBtn && resetDateBtn) {
+        chrome.storage.local.get(['fakeDate'], (result) => {
+            dateInput.value = result.fakeDate || new Date().toISOString().split('T')[0];
+        });
+
+        const runOnPage = (func, arg) => {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (!tabs[0]?.id) return;
+                chrome.scripting.executeScript({
+                    target: { tabId: tabs[0].id },
+                    world: 'MAIN',
+                    func: func,
+                    args: arg ? [arg] : []
+                }, () => {
+                    showToast("✅ Дата применена!");
+                    setTimeout(() => {
+                        chrome.tabs.reload(tabs[0].id, () => window.close());
+                    }, 500);
+                });
+            });
+        };
+
+        saveDateBtn.addEventListener('click', () => {
+            const selectedDate = dateInput.value;
+            if (selectedDate) {
+                chrome.storage.local.set({ fakeDate: selectedDate }, () => {
+                    runOnPage((val) => { window.localStorage.setItem('__mesh_spoofed_date', val); }, selectedDate);
+                });
+            }
+        });
+
+        resetDateBtn.addEventListener('click', () => {
+            chrome.storage.local.remove('fakeDate', () => {
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (!tabs[0]?.id) return;
+                    chrome.scripting.executeScript({
+                        target: { tabId: tabs[0].id },
+                        world: 'MAIN',
+                        func: () => { window.localStorage.removeItem('__mesh_spoofed_date'); }
+                    }, () => {
+                        showToast("🔄 Дата сброшена!");
+                        setTimeout(() => {
+                            chrome.tabs.reload(tabs[0].id, () => window.close());
+                        }, 500);
+                    });
+                });
+            });
+        });
+    }
 });
