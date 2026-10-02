@@ -27,7 +27,7 @@
     `;
     document.body.appendChild(tooltip);
 
-    function parseStudentRow(row) {
+    function parseStudentRow(row, targetElement) {
         let stats = { 
             n: 0, 
             sick: 0, 
@@ -36,13 +36,26 @@
             count: 0
         };
         
-        const cells = row.querySelectorAll('[data-test-component*="markCell"]');
+        let cells = Array.from(row.querySelectorAll('[data-test-component*="markCell"]'));
+        
+        if (cells.length === 0 && targetElement) {
+            const rect = targetElement.getBoundingClientRect();
+            const centerY = rect.top + rect.height / 2;
+            const allCells = Array.from(document.querySelectorAll('[data-test-component*="markCell"]'));
+            cells = allCells.filter(c => {
+                const r = c.getBoundingClientRect();
+                return Math.abs((r.top + r.height / 2) - centerY) < 20; 
+            });
+        }
         
         cells.forEach(cell => {
             const attr = cell.getAttribute('data-test-component') || '';
             if (attr.includes('_average') || attr.includes('internalMark')) return;
 
-            const text = cell.innerText.trim().toLowerCase();
+            let clone = cell.cloneNode(true);
+            clone.querySelectorAll('.visually-hidden, [aria-hidden="true"], [style*="display: none"]').forEach(el => el.remove());
+            const text = clone.textContent.trim().toLowerCase();
+
             if (text === 'н') { 
                 stats.n++; 
                 return; 
@@ -91,7 +104,7 @@
         const isNameArea = e.target.closest('td:first-child') || e.target.hasAttribute('title');
         
         if (isNameArea) {
-            const stats = parseStudentRow(row);
+            const stats = parseStudentRow(row, e.target);
             if (stats.count === 0 && stats.n === 0 && stats.sick === 0) return;
 
             const name = getStudentName(row);
