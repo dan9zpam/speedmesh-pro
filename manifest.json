@@ -65,6 +65,7 @@
         "achievements.js",
         "randomizer.js",
         "absences.js",
+        "homework.js",
         "ktp.js",
         "ktp_injector.js",
         "timer.js",

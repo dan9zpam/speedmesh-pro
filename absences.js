@@ -1,9 +1,8 @@
-/**
- * 📊 MESH Absences & Dossier (v9.1 - Compact)
- * Исправлено: компактный вид, удалены даты пропусков.
+/*
+ 📊 MESH Absences & Dossier (v9.0)
  */
 (function() {
-    console.log("📊 MESH Absences v9.1: Компактный режим");
+    console.log("📊 MESH Absences v9.0: Режим взвешенного среднего балла");
 
     let isEnabled = true;
     const syncSettings = () => {
@@ -20,10 +19,10 @@
     const tooltip = document.createElement('div');
     tooltip.style.cssText = `
         position: fixed; display: none; z-index: 1000001;
-        background: rgba(17, 24, 39, 0.95); border: 1px solid #4b5563; border-radius: 8px;
-        padding: 10px 14px; color: white; font-family: -apple-system, system-ui, sans-serif;
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3); pointer-events: none;
-        min-width: 160px; border-left: 3px solid #3b82f6; backdrop-filter: blur(4px);
+        background: #111827; border: 1px solid #4b5563; border-radius: 12px;
+        padding: 16px; color: white; font-family: -apple-system, system-ui, sans-serif;
+        box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); pointer-events: none;
+        min-width: 260px; border-left: 4px solid #3b82f6;
     `;
     document.body.appendChild(tooltip);
 
@@ -33,7 +32,7 @@
             sick: 0, 
             weightedSum: 0, 
             weightTotal: 0, 
-            count: 0
+            count: 0 
         };
         
         let cells = Array.from(row.querySelectorAll('[data-test-component*="markCell"]'));
@@ -50,21 +49,23 @@
         
         cells.forEach(cell => {
             const attr = cell.getAttribute('data-test-component') || '';
+            // Пропускаем системные ячейки итогов
             if (attr.includes('_average') || attr.includes('internalMark')) return;
 
             let clone = cell.cloneNode(true);
             clone.querySelectorAll('.visually-hidden, [aria-hidden="true"], [style*="display: none"]').forEach(el => el.remove());
             const text = clone.textContent.trim().toLowerCase();
 
-            if (text === 'н') { 
-                stats.n++; 
-                return; 
-            }
-            if (['б', 'у', 'п'].includes(text)) { stats.sick++; return; }
+            // Проверка на пропуски (н) или болезнь
+            if (text.includes('н')) { stats.n++; return; }
+            if (['б', 'у', 'п'].some(v => text.includes(v))) { stats.sick++; return; }
 
+            // Логика взвешенной оценки:
+            // Обычно первый span - оценка, второй - коэффициент (вес)
             const spans = cell.querySelectorAll('span');
             if (spans.length >= 1) {
                 const grade = parseInt(spans[0].innerText.trim());
+                // Если есть второй span - это вес, если нет - вес 1
                 const weight = spans.length >= 2 ? parseInt(spans[spans.length - 1].innerText.trim()) : 1;
 
                 if (!isNaN(grade) && grade >= 2 && grade <= 5) {
@@ -84,9 +85,11 @@
     }
 
     function getStudentName(row) {
+        // Ищем span с атрибутом title
         const nameSpan = row.querySelector('span[title]');
         if (nameSpan) return nameSpan.getAttribute('title');
 
+        // Иначе ищем span с текстом, игнорируя короткие цифры
         const spans = row.querySelectorAll('span');
         for (let s of spans) {
             const t = s.innerText.trim();
@@ -101,6 +104,7 @@
         const row = e.target.closest('tr, [role="row"]');
         if (!row) return;
 
+        // Показываем тултип при наведении на имя или начало строки
         const isNameArea = e.target.closest('td:first-child') || e.target.hasAttribute('title');
         
         if (isNameArea) {
@@ -110,17 +114,25 @@
             const name = getStudentName(row);
 
             tooltip.innerHTML = `
-                <div style="font-weight:600; font-size:13px; margin-bottom:8px; color:#fff; border-bottom:1px solid #374151; padding-bottom:6px;">${name}</div>
+                <div style="font-size:10px; text-transform:uppercase; color:#9ca3af; margin-bottom:8px; letter-spacing:1px;">Профиль ученика</div>
+                <div style="font-weight:700; font-size:15px; margin-bottom:12px; color:#fff; border-bottom:1px solid #374151; padding-bottom:8px;">${name}</div>
                 
-                <div style="display:grid; grid-template-columns: 1fr auto; gap:4px 12px; font-size:12px;">
-                    <span style="color:#d1d5db;">Ср. балл:</span>
-                    <b style="color:${stats.avg >= 4.5 ? '#10b981' : (stats.avg >= 3.5 ? '#fbbf24' : '#f87171')};">${stats.avg}</b>
+                <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; font-size:13px;">
+                    <span style="color:#d1d5db;">Взвешенный балл:</span>
+                    <b style="color:${stats.avg >= 4.5 ? '#10b981' : (stats.avg >= 3.5 ? '#fbbf24' : '#f87171')}; font-size:15px;">${stats.avg}</b>
                     
-                    <span style="color:#d1d5db;">Н (Пропуски):</span>
+                    <span style="color:#d1d5db;">Пропуски (Н):</span>
                     <b style="color:#ef4444;">${stats.n}</b>
                     
-                    <span style="color:#d1d5db;">Б (Полезнь):</span>
+                    <span style="color:#d1d5db;">По болезни:</span>
                     <b style="color:#3b82f6;">${stats.sick}</b>
+                    
+                    <span style="color:#d1d5db;">Сумма весов:</span>
+                    <b style="color:#fff;">${stats.weightTotal}</b>
+                </div>
+                
+                <div style="margin-top:12px; padding-top:8px; border-top:1px dashed #374151; font-size:10px; color:#6b7280; line-height:1.2;">
+                    Расчет: (Оценка × Вес) / Сумма весов.<br>Игнорируются системные итоги.
                 </div>
             `;
             tooltip.style.display = 'block';
@@ -129,20 +141,13 @@
 
     document.addEventListener('mousemove', (e) => {
         if (tooltip.style.display === 'block') {
-            tooltip.style.left = (e.clientX + 15) + 'px';
-            tooltip.style.top = (e.clientY + 15) + 'px';
+            tooltip.style.left = (e.clientX + 20) + 'px';
+            tooltip.style.top = (e.clientY + 10) + 'px';
         }
     });
 
     document.addEventListener('mouseout', (e) => {
-        if (!e.relatedTarget) {
-            tooltip.style.display = 'none';
-            return;
-        }
-        const wasNameArea = e.target.closest('td:first-child') || e.target.hasAttribute('title');
-        const isNowNameArea = e.relatedTarget.closest('td:first-child') || e.relatedTarget.hasAttribute('title');
-        
-        if (wasNameArea && !isNowNameArea) {
+        if (e.target.tagName === 'TD' || e.target.tagName === 'SPAN') {
             tooltip.style.display = 'none';
         }
     });

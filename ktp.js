@@ -12,73 +12,44 @@
 
     let isKtpRunning = false;
 
-    document.addEventListener('SpeedmeshDOMReady', () => {
-        if (!document.body) return; 
-        if (window.sessionStorage.getItem('MESH_KTP_HIDDEN') === 'true') return;
+    setInterval(() => {
+        if (!document.body || isKtpRunning) return; 
 
-        try {
-            chrome.storage.sync.get(null, (data) => {
-                if (chrome.runtime.lastError) return;
-                if (data.ktpModule !== false && window.location.href.includes('planning') && !window.location.href.includes('programs/new')) {
-                    if (!document.getElementById('mesh-ktp-panel')) drawKtpPanel();
-                    if (!isKtpRunning) updatePanelUI();
-                } else {
-                    const p = document.getElementById('mesh-ktp-panel');
-                    if (p) p.remove();
-                    isKtpRunning = false;
-                }
-            });
-        } catch (e) {
-            // Extension context invalidated
-        }
+        chrome.storage.sync.get(null, (data) => {
+            if (data.ktpModule !== false && window.location.href.includes('planning')) {
+                if (!document.getElementById('mesh-ktp-panel')) drawKtpPanel();
+                updatePanelUI();
+            } else {
+                const p = document.getElementById('mesh-ktp-panel');
+                if (p) p.remove();
+            }
+        });
     }, 1000);
 
     function drawKtpPanel() {
-        if (document.getElementById('mesh-ktp-panel')) return;
-
         const panel = document.createElement('div');
         panel.id = 'mesh-ktp-panel';
-        panel.style.cssText = 'position:fixed !important; bottom:30px !important; left:30px !important; background:rgba(20, 25, 30, 0.8) !important; backdrop-filter: blur(16px) !important; color:white !important; padding:20px 25px 15px 25px !important; border-radius:16px !important; box-shadow:0 10px 30px rgba(0,0,0,0.5) !important; z-index:2147483647 !important; display:flex !important; flex-direction:column !important; gap:10px !important; font-family:sans-serif !important; border:1px solid rgba(255,255,255,0.15) !important; width:300px !important; min-height:80px !important;';
-        
-        // Кнопка закрытия
-        const closeBtn = document.createElement('div');
-        closeBtn.id = 'mesh-ktp-close';
-        closeBtn.innerHTML = '×';
-        closeBtn.style.cssText = 'position:absolute !important; top:5px !important; right:12px !important; cursor:pointer !important; color:rgba(255,255,255,0.6) !important; font-size:24px !important; font-weight:bold !important; z-index:2147483647 !important; line-height:1 !important; padding:5px !important;';
-        
-        closeBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            panel.remove();
-            window.sessionStorage.setItem('MESH_KTP_HIDDEN', 'true');
-            console.log("📅 КТП панель скрыта пользователем");
-        };
-
-        // Эффект при наведении
-        closeBtn.onmouseover = () => closeBtn.style.color = '#ff4d4f';
-        closeBtn.onmouseout = () => closeBtn.style.color = 'rgba(255,255,255,0.6)';
-
-        panel.appendChild(closeBtn);
+        panel.style.cssText = 'position:fixed; bottom:30px; left:30px; background:#1e272e; color:white; padding:15px 25px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.8); z-index:9999999; display:flex; flex-direction:column; gap:10px; font-family:sans-serif; border:2px solid #3498db; width:300px;';
         document.body.appendChild(panel);
-        
-        // Подключаем Window Manager
-        setTimeout(() => { if (window.makeMeshDraggable) window.makeMeshDraggable(panel, "📅"); }, 500);
     }
 
     function updatePanelUI() {
-        if (window.sessionStorage.getItem('MESH_KTP_HIDDEN') === 'true') return;
         const panel = document.getElementById('mesh-ktp-panel');
         if (!panel || isKtpRunning) return;
 
         let ids = [];
+        let details = {};
         try {
             const stored = window.sessionStorage.getItem('MESH_KTP_IDS');
             if (stored) ids = JSON.parse(stored);
         } catch(e) {}
+        try {
+            details = JSON.parse(window.sessionStorage.getItem('MESH_KTP_DETAILS') || '{}');
+        } catch(e) {}
 
         if (ids.length === 0) {
             panel.innerHTML = `
-                <div style="font-size:16px; font-weight:bold; color:#3498db;">🗓️ Ассистент КТП</div><div id="ktp-tools-container"></div>
+                <div style="font-size:16px; font-weight:bold; color:#3498db;">🗓️ Ассистент КТП</div>
                 <div style="font-size:12px; color:#f39c12; margin-top:5px;">⏳ Ожидание данных...</div>
                 <div style="font-size:11px; color:#bdc3c7; line-height:1.4; margin-top:5px; padding:8px; background:rgba(255,255,255,0.05); border-radius:6px;">
                     Разверните пункт 3 <b>"Календарно-тематическое планирование"</b>.
@@ -86,7 +57,7 @@
             `;
         } else {
             panel.innerHTML = `
-                <div id="ktp-tools-container"></div><div style="font-size:16px; font-weight:bold; color:#3498db; display:flex; justify-content:space-between;">
+                <div style="font-size:16px; font-weight:bold; color:#3498db; display:flex; justify-content:space-between;">
                     <span>🗓️ Ассистент КТП</span>
                     <span style="color:#2ecc71;">${ids.length} шт.</span>
                 </div>
@@ -94,12 +65,30 @@
             `;
             setTimeout(() => {
                 const btn = document.getElementById('ktp-btn-run');
-                if (btn) btn.onclick = () => runApiProcess(ids);
+                if (btn) btn.onclick = () => runApiProcess(ids, details);
             }, 50);
         }
     }
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+    }
+
+    function getApiErrorMessage(response) {
+        if (response.err) return response.err;
+        if (!response.text) return 'Сервер не вернул описание ошибки';
+        try {
+            const data = JSON.parse(response.text);
+            const message = data.message || data.error_text || data.error;
+            return typeof message === 'string' ? message : response.text;
+        } catch(e) {
+            return response.text;
+        }
+    }
 
     // Функция отправки с перехватом текста ответа сервера
     async function apiRequest(planId, action) {
@@ -141,20 +130,61 @@
         }
     }
 
-    async function runApiProcess(ids) {
+    async function runApiProcess(ids, details) {
         isKtpRunning = true;
         const panel = document.getElementById('mesh-ktp-panel');
         let success = 0; let fail = 0;
         let processLogs = []; // Хранилище ПОЛНОГО лога
+        let failedPlans = [];
+        const idsByKey = new Map(ids.map(id => [String(id), id]));
+        const orderedIds = [];
+        const orderedKeys = new Set();
+        const rowsByKey = new Map();
 
-        for (let i = 0; i < ids.length; i++) {
-            const planId = ids[i];
+        document.querySelectorAll('button[data-test-component^="editCTP-"]').forEach(button => {
+            const match = button.getAttribute('data-test-component').match(/^editCTP-(\d+)/);
+            const row = button.closest('tr');
+            if (!match || !row) return;
+
+            const key = match[1];
+            rowsByKey.set(key, row);
+            if (idsByKey.has(key) && !orderedKeys.has(key)) {
+                orderedIds.push(idsByKey.get(key));
+                orderedKeys.add(key);
+            }
+        });
+        ids.forEach(id => {
+            const key = String(id);
+            if (!orderedKeys.has(key)) orderedIds.push(id);
+        });
+        const currentPage = Number(document.querySelector('[aria-current="page"]')?.textContent) || 1;
+        const pageSizeText = document.querySelector('[data-test-component*="selectLimit-singleField"]')?.textContent || '';
+        const pageSize = Number(pageSizeText.match(/\d+/)?.[0]) || rowsByKey.size || ids.length;
+
+        for (let i = 0; i < orderedIds.length; i++) {
+            const planId = orderedIds[i];
             
-            let row = document.querySelector(`tr[data-row-key="${planId}"]`);
+            let row = rowsByKey.get(String(planId));
+            let listNumber = null;
             if (row) {
+                const siblingRows = Array.from(row.parentElement.children).filter(element => element.tagName === 'TR');
+                const rowIndex = siblingRows.indexOf(row);
+                if (rowIndex !== -1) listNumber = (currentPage - 1) * pageSize + rowIndex + 1;
                 row.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 row.style.backgroundColor = "rgba(52, 152, 219, 0.2)";
             }
+            const planNumber = listNumber === null ? 'КТП' : `КТП № ${listNumber} из ${ids.length}`;
+            const planDetails = { ...(details[planId] || {}) };
+            if (row) {
+                const cells = Array.from(row.cells);
+                if (!planDetails.discipline && cells[0]?.innerText.trim()) planDetails.discipline = cells[0].innerText.trim();
+                if (!planDetails.group && cells[4]?.innerText.trim()) planDetails.group = cells[4].innerText.trim();
+                if (!planDetails.specialty && cells[1]?.innerText.trim()) planDetails.specialty = cells[1].innerText.trim();
+                if (!planDetails.course && cells[3]?.innerText.trim()) planDetails.course = cells[3].innerText.trim();
+            }
+            const detailsText = Object.entries(planDetails)
+                .map(([key, value]) => `${{ group: 'Группа', discipline: 'Дисциплина', specialty: 'Специальность', course: 'Курс' }[key] || key}: ${value}`)
+                .join('; ');
 
             panel.innerHTML = `<div style="text-align:center; font-size:14px;">КТП <b>${i+1} из ${ids.length}</b><br><span style="color:#f39c12;">⏳ Достроение...</span></div>`;
             let r1 = await apiRequest(planId, 'finish');
@@ -163,7 +193,8 @@
             panel.innerHTML = `<div style="text-align:center; font-size:14px;">КТП <b>${i+1} из ${ids.length}</b><br><span style="color:#3498db;">⏳ Пересчет...</span></div>`;
             let r2 = await apiRequest(planId, 'recalc');
 
-            let logMsg = `=======================================\nКТП (ID: ${planId})\n`;
+            let logMsg = `=======================================\n${planNumber}\n`;
+            logMsg += detailsText ? `Данные КТП: ${detailsText}\n` : `Дополнительные сведения о КТП не найдены\n`;
 
             if (r1.ok && r2.ok) {
                 success++;
@@ -173,10 +204,20 @@
                 fail++;
                 if (row) row.style.backgroundColor = "rgba(231, 76, 60, 0.4)";
                 logMsg += `❌ ОШИБКА\n`;
-                if (!r1.ok) logMsg += `[Достроение] Статус: ${r1.status}. Ответ сервера: ${r1.text || r1.err}\n`;
-                if (!r2.ok) logMsg += `[Пересчет] Статус: ${r2.status}. Ответ сервера: ${r2.text || r2.err}\n`;
+                const errorMessages = [];
+                if (!r1.ok) {
+                    const message = getApiErrorMessage(r1);
+                    errorMessages.push(`Достроение (${r1.status}): ${message}`);
+                    logMsg += `[Достроение] Статус: ${r1.status}. Ответ сервера: ${r1.text || r1.err}\n`;
+                }
+                if (!r2.ok) {
+                    const message = getApiErrorMessage(r2);
+                    errorMessages.push(`Пересчет (${r2.status}): ${message}`);
+                    logMsg += `[Пересчет] Статус: ${r2.status}. Ответ сервера: ${r2.text || r2.err}\n`;
+                }
+                failedPlans.push({ planNumber, detailsText, errorMessages });
                 
-                console.error(`❌ Ошибка КТП ${planId}: Достроение=${r1.status}, Пересчет=${r2.status}`);
+                console.error(`❌ Ошибка ${planNumber}: Достроение=${r1.status}, Пересчет=${r2.status}`);
             }
             
             processLogs.push(logMsg);
@@ -186,10 +227,23 @@
         // Кнопка логов теперь появляется ВСЕГДА
         let logBtnColor = fail > 0 ? "#e74c3c" : "#f39c12"; // Красная, если есть ошибки, иначе оранжевая
         let logBtnHtml = `<button id="ktp-btn-log" style="background:${logBtnColor}; color:white; border:none; border-radius:6px; padding:8px; cursor:pointer; width:100%; font-weight:bold; margin-bottom:8px; transition:0.2s;">📄 Скачать лог процесса</button>`;
+        const failedPlansHtml = failedPlans.length ? `
+            <div style="font-size:12px; font-weight:bold; color:#ff7675;">КТП с ошибками:</div>
+            <div style="max-height:200px; overflow-y:auto; font-size:11px; line-height:1.4;">
+                ${failedPlans.map(plan => `
+                    <div style="padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.15); overflow-wrap:anywhere;">
+                        <b>${escapeHtml(plan.planNumber)}</b><br>
+                        ${escapeHtml(plan.detailsText || 'Данные группы и дисциплины не найдены')}<br>
+                        ${plan.errorMessages.map(message => escapeHtml(message)).join('<br>')}
+                    </div>
+                `).join('')}
+            </div>
+        ` : '';
 
         panel.innerHTML = `
-            <div style="font-size:16px; font-weight:bold; color:#2ecc71; text-align:center;">✅ Готово!</div>
+            <div style="font-size:16px; font-weight:bold; color:${fail > 0 ? '#e74c3c' : '#2ecc71'}; text-align:center;">${fail > 0 ? '⚠️ Завершено с ошибками' : '✅ Готово!'}</div>
             <div style="text-align:center; font-size:13px; margin: 5px 0 10px 0;">Успешно: ${success} | Ошибок: ${fail}</div>
+            ${failedPlansHtml}
             ${logBtnHtml}
             <button id="ktp-btn-reload" style="background:#2ecc71; color:white; border:none; border-radius:6px; padding:10px; cursor:pointer; width:100%; font-weight:bold;">🔄 Обновить страницу</button>
         `;
