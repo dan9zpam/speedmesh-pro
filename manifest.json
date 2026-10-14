@@ -64,6 +64,7 @@
         "spy_content.js",
         "achievements.js",
         "randomizer.js",
+        "visits.js",
         "absences.js",
         "homework.js",
         "ktp.js",

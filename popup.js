@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }).catch(e => console.log('Update check failed'));
 
     const toggles = [
-        'autoGrader', 'highlightGrades', 'ktpModule', 'calcAttendance', 'calculatorMode', 'stickyMode', 
+        'autoGrader', 'highlightGrades', 'ktpModule', 'calcAttendance', 'visitsScanner', 'calculatorMode', 'stickyMode', 
         'speedUp', 'apiSpyMode', 'architectMode', 'randomizerMode', 
         'timerMode', 'ghostMode'
     ];

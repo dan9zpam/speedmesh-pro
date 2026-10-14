@@ -23,6 +23,56 @@
             } catch(e) {}
         }
 
+        if (url.includes('/api/profeducation/core/teacher/v1/attendances')) {
+            try {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    const list = Array.isArray(data) ? data : (data.payload || data.items || []);
+                    if (list.length > 0) {
+                        window.sessionStorage.setItem('MESH_ATTENDANCES_CACHE', JSON.stringify(list));
+                    }
+                }).catch(()=>{});
+            } catch(e) {}
+        }
+
+        if (url.includes('/api/profeducation/core/teacher/v1/attendance_notifications')) {
+            try {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    const list = Array.isArray(data) ? data : (data.payload || data.items || []);
+                    if (list.length > 0) {
+                        window.sessionStorage.setItem('MESH_NOTIFICATIONS_CACHE', JSON.stringify(list));
+                    }
+                }).catch(()=>{});
+            } catch(e) {}
+        }
+
+        if (url.includes('/api/profeducation/core/teacher/v1/emias_medical_recommendations')) {
+            try {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    const list = Array.isArray(data) ? data : (data.payload || data.items || []);
+                    if (list.length > 0) {
+                        window.sessionStorage.setItem('MESH_EMIAS_CACHE', JSON.stringify(list));
+                    }
+                }).catch(()=>{});
+            } catch(e) {}
+        }
+
+        if (url.includes('/api/profeducation/core/teacher/v1/student_profiles')) {
+            try {
+                const clone = response.clone();
+                clone.json().then(data => {
+                    const list = Array.isArray(data) ? data : (data.payload || data.items || []);
+                    list.forEach(st => {
+                        if (st.id && st.ispp_account) {
+                            window.sessionStorage.setItem(`MESH_STUDENT_ISPP_${st.id}`, String(st.ispp_account));
+                        }
+                    });
+                }).catch(()=>{});
+            } catch(e) {}
+        }
+
         if ((url.includes('/api/profeducation/core/teacher/v1/') || url.includes('marks') || url.includes('grade_system')) && !url.includes('journal')) {
             if (args[1]?.method !== 'POST' && args[1]?.method !== 'DELETE') {
                 try {

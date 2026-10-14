@@ -6,15 +6,19 @@
 
     let isEnabled = true;
     const syncSettings = () => {
-        chrome.storage.sync.get(['calcAttendance'], (data) => {
-            if (data && data.calcAttendance !== undefined) isEnabled = data.calcAttendance;
-        });
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+            chrome.storage.sync.get(['calcAttendance'], (data) => {
+                if (data && data.calcAttendance !== undefined) isEnabled = data.calcAttendance;
+            });
+        }
     };
     syncSettings();
 
-    chrome.runtime.onMessage.addListener((req) => {
-        if (req.action === "updateSettings") syncSettings();
-    });
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+        chrome.runtime.onMessage.addListener((req) => {
+            if (req.action === "updateSettings") syncSettings();
+        });
+    }
 
     const tooltip = document.createElement('div');
     tooltip.style.cssText = `
@@ -98,7 +102,24 @@
         return "Ученик";
     }
 
-    document.addEventListener('mouseover', (e) => {
+    function getStudentProfileId(row) {
+        const cells = row.querySelectorAll('[data-test-component*="markCell"]');
+        for (let cell of cells) {
+            const attr = cell.getAttribute('data-test-component') || '';
+            const match = attr.match(/markCell-(\d+)_/);
+            if (match && match[1]) return match[1];
+        }
+        const rowAttrs = ['data-student-profile-id', 'data-student-id', 'data-profile-id'];
+        for (let a of rowAttrs) {
+            const val = row.getAttribute(a);
+            if (val) return val;
+        }
+        return null;
+    }
+
+    let activeTooltipStudentId = null;
+
+    document.addEventListener('mouseover', async (e) => {
         if (!isEnabled) return;
 
         const row = e.target.closest('tr, [role="row"]');
@@ -112,6 +133,8 @@
             if (stats.count === 0 && stats.n === 0 && stats.sick === 0) return;
 
             const name = getStudentName(row);
+            const studentId = getStudentProfileId(row);
+            activeTooltipStudentId = studentId;
 
             tooltip.innerHTML = `
                 <div style="font-size:10px; text-transform:uppercase; color:#9ca3af; margin-bottom:8px; letter-spacing:1px;">Профиль ученика</div>
@@ -124,20 +147,54 @@
                     <span style="color:#d1d5db;">Пропуски (Н):</span>
                     <b style="color:#ef4444;">${stats.n}</b>
                     
-                    <span style="color:#d1d5db;">По болезни:</span>
+                    <span style="color:#d1d5db;">По болезни / ЕМИАС:</span>
                     <b style="color:#3b82f6;">${stats.sick}</b>
                     
                     <span style="color:#d1d5db;">Сумма весов:</span>
                     <b style="color:#fff;">${stats.weightTotal}</b>
                 </div>
+
+                <div id="mesh-tooltip-attendance-row" style="margin-top:10px; padding-top:8px; border-top:1px solid #374151; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span style="color:#9ca3af;">Сегодня в МЭШ:</span>
+                    <b id="mesh-tooltip-visits-status" style="color:#10b981; font-size:12px;">Присутствует</b>
+                </div>
+                <div style="font-size:9px; color:#60a5fa; margin-top:4px; text-align:right;">Shift + Клик: полное досье пропусков</div>
                 
-                <div style="margin-top:12px; padding-top:8px; border-top:1px dashed #374151; font-size:10px; color:#6b7280; line-height:1.2;">
+                <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #374151; font-size:10px; color:#6b7280; line-height:1.2;">
                     Расчет: (Оценка × Вес) / Сумма весов.<br>Игнорируются системные итоги.
                 </div>
             `;
             tooltip.style.display = 'block';
+
+            // Проверяем официальные пропуски и ЕМИАС из МЭШ
+            if (studentId && window.MeshVisitsAPI) {
+                const summary = window.MeshVisitsAPI.getStudentAttendanceSummary(studentId);
+                const statusEl = document.getElementById('mesh-tooltip-visits-status');
+                if (statusEl && summary) {
+                    statusEl.innerText = summary.todayStatusText;
+                    statusEl.style.color = summary.todayStatusColor;
+                }
+            }
         }
     });
+
+    // Обработка Shift + Клик по имени ученика для открытия модального окна истории
+    document.addEventListener('click', (e) => {
+        if (!e.shiftKey) return;
+        const row = e.target.closest('tr, [role="row"]');
+        if (!row) return;
+
+        const isNameArea = e.target.closest('td:first-child') || e.target.hasAttribute('title');
+        if (isNameArea && window.MeshVisitsAPI) {
+            const studentId = getStudentProfileId(row);
+            const name = getStudentName(row);
+            if (studentId) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.MeshVisitsAPI.showStudentVisitsHistory(studentId, name);
+            }
+        }
+    }, true);
 
     document.addEventListener('mousemove', (e) => {
         if (tooltip.style.display === 'block') {
@@ -148,6 +205,7 @@
 
     document.addEventListener('mouseout', (e) => {
         if (e.target.tagName === 'TD' || e.target.tagName === 'SPAN') {
+            activeTooltipStudentId = null;
             tooltip.style.display = 'none';
         }
     });
