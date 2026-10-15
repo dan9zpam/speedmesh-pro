@@ -64,18 +64,49 @@
                 btn.innerText = '⏳ Подготовка...';
                 btn.style.pointerEvents = 'none';
                 
-                // Fetch authorization tokens (either from cookies or interceptor cache)
-                let aupd_token = null; let profile_id = null; let meshStolenHeaders = {};
+                // Fetch authorization tokens and session headers
+                let aupd_token = null;
+                let profile_id = localStorage.getItem('MES_API_PROFILE_ID') || null;
+                let aid = localStorage.getItem('MES_API_YEAR_ID') || null;
+                let hostId = "63";
+                let roleId = "30";
+
                 const tk = document.cookie.match(/(?:^|; )aupd_token=([^;]*)/); 
+                if (tk) aupd_token = decodeURIComponent(tk[1]); 
+
                 const pr = document.cookie.match(/(?:^|; )profile_id=([^;]*)/);
-                if(tk) aupd_token = decodeURIComponent(tk[1]); 
-                if(pr) profile_id = decodeURIComponent(pr[1]);
-                try { meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}"); let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization']; if(auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', ''); let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id']; if(pId) profile_id = pId; } catch(e) {}
+                if (pr && !profile_id) profile_id = decodeURIComponent(pr[1]);
+
+                const aidCookie = document.cookie.match(/(?:^|; )aid=([^;]*)/);
+                if (aidCookie && !aid) aid = decodeURIComponent(aidCookie[1]);
+
+                const roleMatch = document.cookie.match(/(?:^|; )aupd_current_role=([^;]*)/);
+                if (roleMatch) {
+                    let parts = decodeURIComponent(roleMatch[1]).split(":");
+                    if (parts.length === 2) {
+                        hostId = parts[0];
+                        roleId = parts[1];
+                    }
+                }
+
+                // Fallback from sessionStorage if cookies were empty
+                try {
+                    let meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}");
+                    let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization'];
+                    if (!aupd_token && auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', '');
+                    let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id'];
+                    if (!profile_id && pId) profile_id = pId;
+                } catch(e) {}
                 
-                let reqHeaders = { "Accept": "application/json, text/plain, */*", "x-mes-subsystem": "profeducation" };
+                let reqHeaders = { 
+                    "Accept": "application/json, text/plain, */*", 
+                    "x-mes-subsystem": "teacherspow",
+                    "x-mes-hostid": hostId,
+                    "X-Mes-RoleId": roleId
+                };
                 if (aupd_token) reqHeaders["Authorization"] = `Bearer ${aupd_token}`;
                 if (profile_id) reqHeaders["Profile-Id"] = profile_id;
-                reqHeaders = { ...reqHeaders, ...meshStolenHeaders };
+                if (aid) reqHeaders["aid"] = aid;
 
                 let downloaded = 0;
                 let failed = 0;
@@ -87,27 +118,42 @@
                 let startAt = `${yearStart}-09-01T00:00:00.000Z`;
                 let stopAt = `${yearEnd}-08-31T00:00:00.000Z`;
 
+                let debugLog = {
+                    hasJSZip: typeof JSZip !== 'undefined',
+                    hasWindowJSZip: typeof window.JSZip !== 'undefined',
+                    downloaded: 0,
+                    failed: 0,
+                    errors: []
+                };
+
                 // Инициализируем архиватор
                 let zip = null;
                 if (typeof JSZip !== 'undefined') {
                     zip = new JSZip();
+                } else if (typeof window.JSZip !== 'undefined') {
+                    zip = new window.JSZip();
                 } else {
-                    console.error("JSZip не загружен!");
+                    debugLog.errors.push("JSZip is not defined in content script scope");
+                    console.warn("JSZip не найден в текущем контексте, переключаемся на пофайловое скачивание.");
                 }
 
                 for (let i = 0; i < groups.length; i++) {
                     const g = groups[i];
-                    btn.innerText = `⏳ Собираем архивом ${i+1}/${groups.length}`;
+                    btn.innerText = `⏳ Скачиваем ${i+1}/${groups.length}`;
                     try {
                         const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
-                        const res = await fetch(url, { headers: reqHeaders });
+                        let res = await fetch(url, { headers: reqHeaders });
+                        // Fallback на journalw, если teacherspow отклонен
+                        if (!res.ok && (res.status === 401 || res.status === 403)) {
+                            reqHeaders["x-mes-subsystem"] = "journalw";
+                            res = await fetch(url, { headers: reqHeaders });
+                        }
                         if (res.ok) {
                             const blob = await res.blob();
                             const safeName = g.name.replace(/[\/\\:\*\?"<>\|]/g, '').trim();
                             if (zip) {
                                 zip.file(`Журнал_${safeName}.xlsx`, blob);
                             } else {
-                                // Fallback на одиночное скачивание, если JSZip не прогрузился
                                 const a = document.createElement('a');
                                 a.href = URL.createObjectURL(blob);
                                 a.download = `Журнал_${safeName}.xlsx`;
@@ -116,39 +162,60 @@
                                 document.body.removeChild(a);
                             }
                             downloaded++;
+                            debugLog.downloaded = downloaded;
                         } else {
                             failed++;
+                            debugLog.failed = failed;
+                            debugLog.errors.push(`Group ${g.id} failed with HTTP ${res.status}`);
                         }
                     } catch(e) {
                         failed++;
+                        debugLog.failed = failed;
+                        debugLog.errors.push(`Group ${g.id} error: ${e.message}`);
                     }
-                    // Пауза 500мс для защиты от rate-limit
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 200));
                 }
                 
                 if (zip && downloaded > 0) {
-                    btn.innerText = `📦 Формируем ZIP архив...`;
+                    btn.innerText = `📦 Сборка ZIP архива...`;
                     try {
                         const zipBlob = await zip.generateAsync({ type: "blob" });
-                        const a = document.createElement('a');
-                        a.href = URL.createObjectURL(zipBlob);
+                        debugLog.zipBlobSize = zipBlob.size;
+                        const blobUrl = URL.createObjectURL(zipBlob);
                         
-                        // Определяем название группы из первого скачанного файла, если возможно
                         let courseName = "Журналы_Куратора";
-                        let match = groups[0].name.match(/(?:ИСП|РУПО)\d+(\.\d+)?/);
+                        let match = (groups[0].name || "").match(/(?:ИСП|РУПО)\d+(\.\d+)?/);
                         if (match) courseName = match[0];
+                        const fileName = `${courseName}_Журналы_${yearStart}-${yearEnd}.zip`;
                         
-                        a.download = `${courseName}_Журналы_${yearStart}-${yearEnd}.zip`;
+                        // Попытка автоматического скачивания
+                        const a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = fileName;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
+                        debugLog.autoDownloadClicked = true;
+
+                        // Всегда добавляем явную кнопку скачивания в панель на случай блокировки popup/download браузером
+                        let dlLink = document.getElementById('speedmesh-zip-download-link');
+                        if (dlLink) dlLink.remove();
+                        dlLink = document.createElement('a');
+                        dlLink.id = 'speedmesh-zip-download-link';
+                        dlLink.href = blobUrl;
+                        dlLink.download = fileName;
+                        dlLink.innerText = `💾 Скачать архив (${(zipBlob.size / 1024).toFixed(0)} КБ)`;
+                        dlLink.style.cssText = "display:block; text-align:center; background:#2980b9; color:white; padding:8px 12px; border-radius:6px; font-weight:bold; text-decoration:none; margin-top:5px;";
+                        panel.appendChild(dlLink);
                     } catch(e) {
+                        debugLog.errors.push("ZIP generation error: " + e.message);
                         console.error("Ошибка при создании ZIP", e);
                     }
                 }
                 
+                window.sessionStorage.setItem('SPEEDMESH_MENTOR_DEBUG', JSON.stringify(debugLog));
                 btn.innerText = `✅ Успешно: ${downloaded}` + (failed > 0 ? `, ❌ Ошибок: ${failed}` : '');
-                setTimeout(() => { btn.innerText = '⬇️ Скачать все журналы (' + groups.length + ')'; btn.style.pointerEvents = 'auto'; }, 3000);
+                setTimeout(() => { btn.innerText = '⬇️ Скачать все журналы (' + groups.length + ')'; btn.style.pointerEvents = 'auto'; }, 4000);
             };
             panel.appendChild(btn);
         } else {

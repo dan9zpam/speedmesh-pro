@@ -17,7 +17,11 @@
                 clone.json().then(data => {
                     let groups = Array.isArray(data) ? data : (data.items || data.data || []);
                     if (groups.length > 0 && groups[0].id) {
-                        window.sessionStorage.setItem('MESH_MENTOR_GROUPS', JSON.stringify(groups));
+                        let existing = [];
+                        try { existing = JSON.parse(window.sessionStorage.getItem('MESH_MENTOR_GROUPS') || '[]'); } catch(e){}
+                        if (url.includes('class_unit_ids=') || groups.length >= existing.length) {
+                            window.sessionStorage.setItem('MESH_MENTOR_GROUPS', JSON.stringify(groups));
+                        }
                     }
                 }).catch(()=>{});
             } catch(e) {}
