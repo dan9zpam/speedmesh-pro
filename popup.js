@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (badge) badge.textContent = 'v' + chrome.runtime.getManifest().version;
 
     // Проверка обновлений (с возможностью скрытия)
-    fetch('https://raw.githubusercontent.com/stillar1/speedmesh-pro/main/manifest.json', { cache: 'no-store' })
+    fetch('https://raw.githubusercontent.com/dan9zpam/speedmesh-pro/main/manifest.json', { cache: 'no-store' })
         .then(res => res.json())
         .then(data => {
             const currentVer = chrome.runtime.getManifest().version;
@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 alert("Чтобы обновиться:\n1. Скачайте код с GitHub (Code -> Download ZIP)\n2. Замените папку расширения\n3. Нажмите кнопку 'Обновить' 🔄 в chrome://extensions");
                                 chrome.storage.local.set({ignoredUpdate: data.version});
                                 banner.style.display = 'none';
-                                chrome.tabs.create({ url: "https://github.com/stillar1/speedmesh-pro" });
+                                chrome.tabs.create({ url: "https://github.com/dan9zpam/speedmesh-pro" });
                             };
                         }
                     }
