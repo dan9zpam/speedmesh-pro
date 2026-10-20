@@ -2,7 +2,7 @@
 // 🚪 MESH Visits & Attendance Scanner
 // Комплексный модуль посещаемости:
 // 1. Официальный реестр пропусков МЭШ и справки ЕМИАС
-// 2. Проходы через турникеты «Москвёнок» (dnevnik-mos-ru-api)
+// 2. Проходы через турникеты (dnevnik-mos-ru-api)
 // ==========================================
 (function() {
     console.log("🚪 MESH Visits & Attendance Scanner: Модуль посещаемости активен");
@@ -116,7 +116,7 @@
         }
     }
 
-    // 3. Резолвинг лицевого счета «Москвёнок» (contract_id / ispp_account)
+    // 3. Резолвинг лицевого счета (contract_id / ispp_account)
     async function resolveContractId(studentProfileId) {
         if (!studentProfileId) return null;
         const cacheKey = `MESH_STUDENT_ISPP_${studentProfileId}`;
@@ -252,7 +252,7 @@
                 
                 <div id="mesh-modal-tabs" style="padding: 10px 20px; background: #111827; border-bottom: 1px solid #1f2937; display: flex; gap: 8px; align-items: center;">
                     <button id="mesh-tab-official" style="background: #2563eb; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">📋 Пропуски в МЭШ</button>
-                    <button id="mesh-tab-turnstile" style="background: #374151; color: #9ca3af; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">🚪 Турникеты (Москвёнок)</button>
+                    <button id="mesh-tab-turnstile" style="background: #374151; color: #9ca3af; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">🚪 Турникеты</button>
                 </div>
 
                 <div id="mesh-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;">
@@ -410,7 +410,7 @@
 
                     let html = `
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px;">
-                            <span style="color: #9ca3af;">Л/С «Москвёнок»: <b style="color: #60a5fa;">${cid}</b></span>
+                            <span style="color: #9ca3af;">Лицевой счет: <b style="color: #60a5fa;">${cid}</b></span>
                             <button id="mesh-btn-change-contract" style="background: transparent; border: 1px solid #4b5563; color: #9ca3af; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer;">Изменить</button>
                         </div>
                     `;
@@ -453,9 +453,9 @@
                 bodyEl.innerHTML = `
                     <div style="padding: 24px 20px; background: #1f2937; border: 1px solid #374151; border-radius: 12px; text-align: center;">
                         <div style="font-size: 26px; margin-bottom: 8px;">💳</div>
-                        <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Лицевой счет «Москвёнок»</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Лицевой счет</div>
                         <div style="font-size: 11px; color: #9ca3af; margin-bottom: 14px; line-height: 1.4; max-width: 380px; margin-left: auto; margin-right: auto;">
-                            Студентам СПО карты «Москвёнок» выдаются, но номер лицевого счета не всегда привязан в профиле МЭШ. Введите номер лицевого счета с карты или из личного кабинета mos.ru студента:
+                            Номер лицевого счета не всегда привязан в профиле МЭШ. Введите номер лицевого счета из личного кабинета mos.ru студента:
                         </div>
                         <div style="display: flex; gap: 8px; justify-content: center; max-width: 320px; margin: 0 auto;">
                             <input type="text" id="mesh-input-contract" placeholder="Лицевой счет (напр. 1234567)" value="${initialVal}" style="background: #111827; border: 1px solid #4b5563; color: white; padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; flex: 1;">
@@ -478,7 +478,7 @@
                 input.onkeydown = (e) => { if (e.key === 'Enter') handleSearch(); };
             }
 
-            bodyEl.innerHTML = `<div style="text-align: center; color: #9ca3af; padding: 30px 0; font-size: 13px;">⏳ Поиск лицевого счета «Москвёнок»...</div>`;
+            bodyEl.innerHTML = `<div style="text-align: center; color: #9ca3af; padding: 30px 0; font-size: 13px;">⏳ Поиск лицевого счета...</div>`;
 
             const contractId = await resolveContractId(studentProfileId);
             if (!contractId) {
