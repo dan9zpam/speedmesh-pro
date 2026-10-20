@@ -459,12 +459,29 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
         const now = new Date();
         const currentMins = now.getHours() * 60 + now.getMinutes();
 
-        // 1. Если уже на странице расписания: ищем карточку текущего урока
+        // 1. Если уже на странице расписания: ищем карточку текущего урока ТОЛЬКО на СЕГОДНЯ
         if (window.location.href.includes('/schedule')) {
-            const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
+            let dayOfWeek = now.getDay(); // 0 - Вс, 1 - Пн, 2 - Вт, 3 - Ср, 4 - Чт, 5 - Пт, 6 - Сб
+            if (dayOfWeek === 0) dayOfWeek = 1;
+
+            let todayCards = Array.from(document.querySelectorAll(`[data-test-component^="scheduleDay-${dayOfWeek}-Card-"]`));
+            
+            // Запасной вариант: поиск контейнера текущего дня по числу месяца (напр. "20 окт")
+            if (todayCards.length === 0) {
+                const dayContainers = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"]'));
+                const todayStr = `${now.getDate()} `;
+                const matchDay = dayContainers.find(d => (d.innerText || '').includes(todayStr));
+                if (matchDay) {
+                    todayCards = Array.from(matchDay.querySelectorAll('[data-test-component*="Card-"]'));
+                }
+            }
+            if (todayCards.length === 0) {
+                todayCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
+            }
+
             let targetCard = null;
 
-            for (let c of allCards) {
+            for (let c of todayCards) {
                 const text = c.innerText;
                 const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
                 if (m) {
@@ -476,8 +493,8 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
                     }
                 }
             }
-            if (!targetCard && allCards.length > 0) {
-                for (let c of allCards) {
+            if (!targetCard && todayCards.length > 0) {
+                for (let c of todayCards) {
                     const text = c.innerText;
                     const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
                     if (m && getMinutes(m[1]) > currentMins) {
@@ -486,11 +503,16 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
                     }
                 }
             }
-            if (!targetCard && allCards.length > 0) {
-                targetCard = allCards[0];
+            if (!targetCard && todayCards.length > 0) {
+                targetCard = todayCards[0];
             }
 
             if (targetCard) {
+                const btnMagazine = targetCard.querySelector('[data-test-component="buttonToMagazine"]');
+                if (btnMagazine) {
+                    btnMagazine.click();
+                    return;
+                }
                 const allEls = Array.from(targetCard.querySelectorAll('a, button, span, div'));
                 const jLink = allEls.find(el => el.textContent.trim() === 'К журналу') || 
                               allEls.find(el => (el.innerText && el.innerText.toLowerCase().includes('журнал')) || (el.href && el.href.includes('journal')));
@@ -522,12 +544,11 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
         let attempts = 0;
         const autoCheck = setInterval(() => {
             attempts++;
-            const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
-            if (allCards.length > 0 || attempts > 25) {
+            const dayOfWeek = (new Date().getDay() === 0) ? 1 : new Date().getDay();
+            const todayCards = Array.from(document.querySelectorAll(`[data-test-component^="scheduleDay-${dayOfWeek}-Card-"]`));
+            if (todayCards.length > 0 || attempts > 25) {
                 clearInterval(autoCheck);
-                if (allCards.length > 0) {
-                    navigateToCurrentLessonJournal();
-                }
+                navigateToCurrentLessonJournal();
             }
         }, 200);
     }

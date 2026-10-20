@@ -380,6 +380,14 @@
         return words.every(w => /^[А-ЯЁа-яё\-]+(\.)?$/.test(w) && w.replace(/[^А-ЯЁа-яё]/g, '').length >= 1);
     }
 
+    function colToIndex(col) {
+        let idx = 0;
+        for (let i = 0; i < col.length; i++) {
+            idx = idx * 26 + (col.charCodeAt(i) - 64);
+        }
+        return idx;
+    }
+
     async function parseJournalXlsx(blob) {
         if (typeof JSZip === 'undefined' && typeof window.JSZip === 'undefined') {
             throw new Error("JSZip не загружен");
@@ -407,6 +415,35 @@
         const sheetDoc = new DOMParser().parseFromString(sheetText, 'application/xml');
         const rowNodes = sheetDoc.getElementsByTagName('row');
 
+        // Поиск границы между сеткой оценок и тематическим планом ("Дата", "Тема", "Домашнее задание")
+        let metadataCutoffIndex = 999;
+        const metaKeywords = ['дата', 'тема', 'домашнее задание', 'тема урока', 'дз'];
+
+        for (let r = 0; r < Math.min(rowNodes.length, 5); r++) {
+            const cellNodes = rowNodes[r].getElementsByTagName('c');
+            for (let c = 0; c < cellNodes.length; c++) {
+                const cell = cellNodes[c];
+                const ref = cell.getAttribute('r') || '';
+                const type = cell.getAttribute('t') || '';
+                const vEl = cell.getElementsByTagName('v')[0];
+                let val = vEl ? vEl.textContent.trim() : '';
+                if (type === 's') {
+                    const idx = parseInt(val, 10);
+                    val = sharedStrings[idx] !== undefined ? sharedStrings[idx].trim() : '';
+                }
+                const low = val.toLowerCase();
+                if (metaKeywords.some(k => low === k || low.startsWith(k))) {
+                    const colMatch = ref.match(/^([A-Z]+)/);
+                    if (colMatch) {
+                        const colIdx = colToIndex(colMatch[1]);
+                        if (colIdx < metadataCutoffIndex) {
+                            metadataCutoffIndex = colIdx;
+                        }
+                    }
+                }
+            }
+        }
+
         const students = [];
 
         for (let r = 0; r < rowNodes.length; r++) {
@@ -430,7 +467,12 @@
                 }
                 const colMatch = ref.match(/^([A-Z]+)/);
                 const colLetter = colMatch ? colMatch[1] : '';
-                rowCells.push({ col: colLetter, val });
+                const colIdx = colToIndex(colLetter);
+
+                // Отсекаем колонки календарно-тематического плана (U, V, W и далее)
+                if (colIdx >= metadataCutoffIndex) continue;
+
+                rowCells.push({ col: colLetter, colIdx, val });
             }
 
             let studentName = null;
@@ -445,23 +487,37 @@
             }
             if (!studentName) continue;
 
+            // Только ячейки с оценками после имени студента
             const afterCells = rowCells.slice(nameColIdx + 1);
             let marks = [];
-            let explicitAvg = null;
 
             for (let cell of afterCells) {
                 let str = cell.val.replace(',', '.').trim();
-                let num = parseFloat(str);
-                if (!isNaN(num) && num >= 1.0 && num <= 5.0) {
-                    if (str.includes('.') && num !== 2.0 && num !== 3.0 && num !== 4.0 && num !== 5.0) {
-                        explicitAvg = num;
-                    } else if (num >= 2.0 && num <= 5.0) {
-                        marks.push(Math.round(num));
+                if (!str) continue;
+
+                // Игнорируем даты (например 01.10, 15.09) и пропуски (н, у, п, б, о)
+                if (/^\d{1,2}\.\d{1,2}(\.\d{2,4})?$/.test(str)) continue;
+
+                // Двойные оценки (например 5/4 или 4/5)
+                if (str.includes('/')) {
+                    const parts = str.split('/');
+                    for (let p of parts) {
+                        let num = parseInt(p.trim(), 10);
+                        if (num >= 2 && num <= 5) marks.push(num);
                     }
+                    continue;
+                }
+
+                let num = parseInt(str, 10);
+                if (!isNaN(num) && num >= 2 && num <= 5) {
+                    marks.push(num);
                 }
             }
 
-            let avg = explicitAvg !== null ? explicitAvg : (marks.length > 0 ? parseFloat((marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(2)) : null);
+            // Средний балл считается строго по реальным оценкам за уроки (от 2.00 до 5.00)
+            let avg = (marks.length > 0)
+                ? parseFloat((marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(2))
+                : null;
 
             students.push({
                 name: studentName,
@@ -479,7 +535,7 @@
             return;
         }
         
-        const origBtnText = triggerBtn ? triggerBtn.innerText : '';
+        const origBtnText = (triggerBtn && !triggerBtn.innerText.includes('⏳')) ? triggerBtn.innerText : '📊 Сводная ведомость группы';
         if (triggerBtn) {
             triggerBtn.innerText = '⏳ Загрузка журналов...';
             triggerBtn.style.pointerEvents = 'none';
