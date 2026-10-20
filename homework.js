@@ -333,4 +333,9 @@
             updateFeatureState(changes.homeworkMode.newValue === true);
         }
     });
+    chrome.runtime.onMessage.addListener((req) => {
+        if (req.action === "updateSettings" && req.settings && req.settings.homeworkMode !== undefined) {
+            updateFeatureState(req.settings.homeworkMode === true);
+        }
+    });
 })();

@@ -50,7 +50,7 @@
         } else {
             if (btn) btn.style.display = 'none';
         }
-    }, 1000);
+    });
 
     function initRandomizer() {
         if (document.getElementById('mesh-randomizer-btn')) return;

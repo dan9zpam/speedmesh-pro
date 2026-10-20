@@ -29,21 +29,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggles = [
         'autoGrader', 'highlightGrades', 'ktpModule', 'calcAttendance', 'visitsScanner', 'calculatorMode', 'stickyMode', 
         'speedUp', 'apiSpyMode', 'architectMode', 'randomizerMode', 
-        'timerMode', 'ghostMode'
+        'timerMode', 'ghostMode', 'homeworkMode'
     ];
 
     const uiElements = {};
     toggles.forEach(key => { uiElements[key] = document.getElementById(key); });
 
-    chrome.storage.sync.get([...toggles, 'customBellsText', 'timerNoteText', 'timerTheme', 'menuTheme'], (data) => {
+    chrome.storage.sync.get([...toggles, 'customBellsText', 'timerNoteText', 'timerTheme', 'menuTheme', 'activeTheme'], (data) => {
         if (data.menuTheme) {
             document.body.setAttribute('data-theme', data.menuTheme);
             if (document.getElementById('menuTheme')) document.getElementById('menuTheme').value = data.menuTheme;
         }
+        if (document.getElementById('meshTheme') && data.activeTheme !== undefined) {
+            document.getElementById('meshTheme').value = data.activeTheme;
+        }
 
         toggles.forEach(key => {
             if (uiElements[key]) {
-                const defaultState = ['speedUp', 'spyMode', 'architectMode', 'ghostMode'].includes(key) ? false : true;
+                const defaultState = ['speedUp', 'apiSpyMode', 'architectMode', 'ghostMode'].includes(key) ? false : true;
                 uiElements[key].checked = data[key] !== undefined ? data[key] : defaultState;
             }
         });
@@ -117,6 +120,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const theme = e.target.value;
             document.body.setAttribute('data-theme', theme);
             chrome.storage.sync.set({ menuTheme: theme });
+        });
+    }
+
+    const meshThemeSelect = document.getElementById('meshTheme');
+    if (meshThemeSelect) {
+        meshThemeSelect.addEventListener('change', (e) => {
+            const theme = e.target.value;
+            chrome.storage.sync.set({ activeTheme: theme });
+            notifyContentScript({ action: 'updateTheme', theme: theme });
+            showToast("🎨 Тема МЭШ сохранена!");
         });
     }
 

@@ -189,6 +189,7 @@
                     <div id="mesh-timer-dot" style="width:10px; height:10px; border-radius:50%; transition: all 0.3s;"></div>
                     <div id="mesh-timer-val" style="font-family:monospace; font-size:16px; font-weight:bold; letter-spacing:0.5px; width:55px; transition: color 0.3s;">--:--</div>
                     <div id="mesh-timer-info" style="font-size:12px; font-weight:600; white-space:nowrap; transition: color 0.3s;">Загрузка...</div>
+                    <a id="mesh-timer-journal-link" href="#" style="display:none; text-decoration:none; background:rgba(37,99,235,0.35); border:1px solid rgba(96,165,250,0.5); color:#93c5fd; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; transition:all 0.2s; white-space:nowrap;" title="Открыть журнал">📖 Журнал</a>
                     <div id="mesh-timer-settings-btn" style="cursor:pointer; font-size:14px; margin-left:5px; opacity:0.3; transition:0.2s;" title="Настройки">⚙️</div>
                 </div>
             </div>
@@ -438,6 +439,67 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
                 elInfo.textContent = "До занятий"; elBar.style.width = '100%'; elDot.style.background = th.lessonDot; elDot.style.boxShadow = `0 0 8px ${th.lessonDot}`;
             } else { elTime.textContent = "--:--"; elInfo.textContent = "Уроки окончены"; elBar.style.width = '100%'; elDot.style.background = th.idleDot; elDot.style.boxShadow = 'none'; }
         }
+
+        // Динамическая кнопка быстрого перехода: Расписание <-> Журнал
+        try {
+            const journalBtn = document.getElementById('mesh-timer-journal-link');
+            if (journalBtn) {
+                if (window.location.href.includes('/schedule')) {
+                    const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
+                    let currentCard = null;
+                    for (let c of allCards) {
+                        const text = c.innerText;
+                        const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
+                        if (m) {
+                            const s = getMinutes(m[1]);
+                            const e = getMinutes(m[2]);
+                            if (currentMins >= s && currentMins <= e) {
+                                currentCard = c;
+                                break;
+                            }
+                        }
+                    }
+                    if (!currentCard && allCards.length > 0) {
+                        for (let c of allCards) {
+                            const text = c.innerText;
+                            const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
+                            if (m && getMinutes(m[1]) > currentMins) {
+                                currentCard = c;
+                                break;
+                            }
+                        }
+                    }
+                    if (currentCard) {
+                        const jLink = currentCard.querySelector('a[href*="journal"]') || Array.from(currentCard.querySelectorAll('button, a')).find(el => el.innerText.includes('журнал') || (el.href && el.href.includes('journal')));
+                        if (jLink) {
+                            const targetHref = jLink.href || jLink.getAttribute('href');
+                            if (targetHref) {
+                                journalBtn.href = targetHref;
+                                journalBtn.onclick = null;
+                            } else {
+                                journalBtn.href = '#';
+                                journalBtn.onclick = (e) => { e.preventDefault(); jLink.click(); };
+                            }
+                            journalBtn.innerText = '📖 Журнал';
+                            journalBtn.title = 'Открыть журнал текущей пары';
+                            journalBtn.style.display = 'inline-block';
+                        } else {
+                            journalBtn.style.display = 'none';
+                        }
+                    } else {
+                        journalBtn.style.display = 'none';
+                    }
+                } else if (window.location.href.includes('/journal')) {
+                    journalBtn.href = 'https://school.mos.ru/spo/teacher/account/schedule';
+                    journalBtn.innerText = '📅 Расписание';
+                    journalBtn.title = 'Вернуться в расписание';
+                    journalBtn.style.display = 'inline-block';
+                    journalBtn.onclick = null;
+                } else {
+                    journalBtn.style.display = 'none';
+                }
+            }
+        } catch(e) {}
     }
     let isTimerInitialized = false;
     let timerInterval = setInterval(() => { 

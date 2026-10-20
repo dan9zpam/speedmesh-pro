@@ -82,6 +82,9 @@ chrome.runtime.onMessage.addListener((req) => {
         localStorage.removeItem('MESH_ACHIEVEMENTS_PRO');
         localStorage.removeItem('MESH_ARCHITECT_RULES');
     }
+    if (req.action === "buildChart") {
+        showPerformanceChartModal();
+    }
 });
 
 document.addEventListener('keydown', (e) => {
@@ -509,10 +512,13 @@ function drawRobotPanel(count) {
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
                 <button id="mesh-cp-start" style="background:#34495e; color:white; border:none; padding:8px 15px; border-radius:6px; cursor:pointer; font-weight:bold; margin-left:10px;">📅 Выбрать столбцы</button>
+                <button id="mesh-panel-chart-btn" style="background:#10b981; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:bold;" title="Показать аналитику и график успеваемости">📊 График</button>
                 ${reloadBtnHtml}
             </div>
         `;
         document.getElementById('mesh-cp-start').onclick = startColumnPicker;
+        const chartBtn = document.getElementById('mesh-panel-chart-btn');
+        if (chartBtn) chartBtn.onclick = showPerformanceChartModal;
         bindReloadButtons(p);
     } else {
         // Если панель УЖЕ отрисована для count > 0, просто обновляем цифру!
@@ -733,7 +739,7 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     } else if (p) {
         p.innerHTML = `
             <div style="font-size:16px; font-weight:bold; color:#2ecc71; margin-right: 10px;">✅ Выставлено: ${ok} шт.</div>
-            <button class="mesh-panel-reload-btn" style="background:#2ecc71; color:white; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-weight:bold; font-size:14px; box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); transition: 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">ОбновитьОбновить (Синхронизация с МЭШ)</button>
+            <button class="mesh-panel-reload-btn" style="background:#2ecc71; color:white; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-weight:bold; font-size:14px; box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); transition: 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">Обновить (Синхронизация с МЭШ)</button>
         `;
         bindReloadButtons(p);
     }
@@ -789,3 +795,173 @@ setInterval(() => {
         }
     }
 }, 3000);
+
+// --- ГРАФИК И АНАЛИТИКА УСПЕВАЕМОСТИ ---
+function showPerformanceChartModal() {
+    if (!window.location.href.includes('/journal')) {
+        let toast = document.createElement('div');
+        toast.innerHTML = '⚠️ <b>График успеваемости:</b> перейдите на страницу журнала!';
+        toast.style.cssText = 'position:fixed; top:20px; right:20px; background:#1e293b; color:#f8fafc; border:1px solid #f59e0b; padding:12px 18px; border-radius:10px; z-index:99999999; box-shadow:0 10px 25px rgba(0,0,0,0.5); font-family:sans-serif; font-size:13px;';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
+        return;
+    }
+
+    let existing = document.getElementById('speedmesh-chart-modal');
+    if (existing) existing.remove();
+
+    let counts = { 5: 0, 4: 0, 3: 0, 2: 0 };
+    let totalMarks = 0;
+    let sumMarks = 0;
+
+    let rows = Array.from(document.querySelectorAll('tr, [role="row"], .Dnevnik-grid-row'));
+    let studentStats = [];
+
+    rows.forEach(r => {
+        let nameEl = r.querySelector('span[title]') || r.querySelector('td:first-child') || r.querySelector('[role="rowheader"]');
+        let name = nameEl ? (nameEl.getAttribute('title') || nameEl.innerText.trim()) : '';
+        if (!name || name.length < 3 || /^\d+$/.test(name) || name.includes('Тема') || name.includes('Итог')) return;
+
+        let cells = r.querySelectorAll('[data-test-component*="markCell"]');
+        if (cells.length === 0) return;
+
+        let sGrades = [];
+        cells.forEach(c => {
+            let attr = c.getAttribute('data-test-component') || '';
+            if (attr.includes('_average') || attr.includes('internalMark')) return;
+            let spans = c.querySelectorAll('span');
+            if (spans.length >= 1) {
+                let g = parseInt(spans[0].innerText.trim());
+                if (!isNaN(g) && g >= 2 && g <= 5) {
+                    sGrades.push(g);
+                    counts[g]++;
+                    totalMarks++;
+                    sumMarks += g;
+                }
+            }
+        });
+
+        if (sGrades.length > 0) {
+            let avg = (sGrades.reduce((a, b) => a + b, 0) / sGrades.length).toFixed(2);
+            studentStats.push({ name, avg: parseFloat(avg), gradesCount: sGrades.length });
+        }
+    });
+
+    studentStats.sort((a, b) => b.avg - a.avg);
+
+    let groupAvg = totalMarks > 0 ? (sumMarks / totalMarks).toFixed(2) : "0.00";
+    let quality = totalMarks > 0 ? (((counts[5] + counts[4]) / totalMarks) * 100).toFixed(1) : "0";
+    let success = totalMarks > 0 ? (((counts[5] + counts[4] + counts[3]) / totalMarks) * 100).toFixed(1) : "0";
+
+    let maxVal = Math.max(counts[5], counts[4], counts[3], counts[2], 1);
+    let barH = g => Math.round((counts[g] / maxVal) * 130);
+
+    const modal = document.createElement('div');
+    modal.id = 'speedmesh-chart-modal';
+    modal.style.cssText = 'position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(15,23,42,0.8); backdrop-filter:blur(8px); z-index:99999999; display:flex; align-items:center; justify-content:center; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:#f8fafc;';
+    modal.innerHTML = `
+        <div style="background:#1e293b; border:1px solid #334155; border-radius:16px; width:640px; max-width:92vw; max-height:90vh; overflow-y:auto; box-shadow:0 25px 50px -12px rgba(0,0,0,0.7); padding:24px; display:flex; flex-direction:column; gap:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #334155; padding-bottom:12px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:24px;">📊</span>
+                    <div>
+                        <div style="font-size:18px; font-weight:700; color:#fff;">Аналитика успеваемости</div>
+                        <div style="font-size:12px; color:#94a3b8;">Статистика оценок текущей группы</div>
+                    </div>
+                </div>
+                <button id="mesh-close-chart" style="background:transparent; border:none; color:#94a3b8; font-size:24px; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:12px;">
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155; text-align:center;">
+                    <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Всего оценок</div>
+                    <div style="font-size:22px; font-weight:700; color:#60a5fa; margin-top:4px;">${totalMarks}</div>
+                </div>
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155; text-align:center;">
+                    <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Средний балл</div>
+                    <div style="font-size:22px; font-weight:700; color:#10b981; margin-top:4px;">${groupAvg}</div>
+                </div>
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155; text-align:center;">
+                    <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Качество</div>
+                    <div style="font-size:22px; font-weight:700; color:#a855f7; margin-top:4px;">${quality}%</div>
+                </div>
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155; text-align:center;">
+                    <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Успеваемость</div>
+                    <div style="font-size:22px; font-weight:700; color:#f59e0b; margin-top:4px;">${success}%</div>
+                </div>
+            </div>
+
+            <div style="background:#0f172a; padding:16px; border-radius:12px; border:1px solid #334155;">
+                <div style="font-size:12px; font-weight:600; color:#cbd5e1; margin-bottom:14px; text-transform:uppercase; letter-spacing:0.5px;">Распределение оценок</div>
+                <div style="display:flex; justify-content:space-around; align-items:flex-end; height:150px; padding-top:10px; border-bottom:2px solid #334155;">
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:6px; flex:1;">
+                        <span style="font-size:12px; font-weight:700; color:#10b981;">${counts[5]}</span>
+                        <div style="width:48px; max-width:80%; height:${barH(5)}px; background:linear-gradient(180deg, #10b981 0%, #059669 100%); border-radius:6px 6px 0 0; min-height:4px;"></div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:6px; flex:1;">
+                        <span style="font-size:12px; font-weight:700; color:#3b82f6;">${counts[4]}</span>
+                        <div style="width:48px; max-width:80%; height:${barH(4)}px; background:linear-gradient(180deg, #3b82f6 0%, #2563eb 100%); border-radius:6px 6px 0 0; min-height:4px;"></div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:6px; flex:1;">
+                        <span style="font-size:12px; font-weight:700; color:#f59e0b;">${counts[3]}</span>
+                        <div style="width:48px; max-width:80%; height:${barH(3)}px; background:linear-gradient(180deg, #f59e0b 0%, #d97706 100%); border-radius:6px 6px 0 0; min-height:4px;"></div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:6px; flex:1;">
+                        <span style="font-size:12px; font-weight:700; color:#ef4444;">${counts[2]}</span>
+                        <div style="width:48px; max-width:80%; height:${barH(2)}px; background:linear-gradient(180deg, #ef4444 0%, #dc2626 100%); border-radius:6px 6px 0 0; min-height:4px;"></div>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:space-around; margin-top:8px; font-weight:700; font-size:12px;">
+                    <span style="color:#10b981; flex:1; text-align:center;">5 (Отлично)</span>
+                    <span style="color:#3b82f6; flex:1; text-align:center;">4 (Хорошо)</span>
+                    <span style="color:#f59e0b; flex:1; text-align:center;">3 (Удовл.)</span>
+                    <span style="color:#ef4444; flex:1; text-align:center;">2 (Неуд.)</span>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155;">
+                    <div style="font-size:12px; font-weight:600; color:#10b981; margin-bottom:8px;">Лидеры успеваемости</div>
+                    ${studentStats.slice(0, 4).map((s, i) => `
+                        <div style="display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px solid #1e293b;">
+                            <span style="color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;">${i+1}. ${s.name}</span>
+                            <b style="color:#10b981;">${s.avg}</b>
+                        </div>
+                    `).join('') || '<div style="font-size:11px; color:#64748b;">Нет данных</div>'}
+                </div>
+                <div style="background:#0f172a; padding:12px; border-radius:10px; border:1px solid #334155;">
+                    <div style="font-size:12px; font-weight:600; color:#f59e0b; margin-bottom:8px;">Требуют внимания (&lt; 3.5)</div>
+                    ${studentStats.filter(s => s.avg < 3.5).slice(0, 4).map(s => `
+                        <div style="display:flex; justify-content:space-between; font-size:12px; padding:3px 0; border-bottom:1px solid #1e293b;">
+                            <span style="color:#cbd5e1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;">${s.name}</span>
+                            <b style="color:#f87171;">${s.avg}</b>
+                        </div>
+                    `).join('') || '<div style="font-size:11px; color:#10b981;">Все студенты аттестованы 👍</div>'}
+                </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:4px;">
+                <button id="mesh-copy-chart-summary" style="background:#334155; color:#fff; border:none; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">📋 Скопировать отчет</button>
+                <button id="mesh-close-chart-btn" style="background:#2563eb; color:#fff; border:none; padding:8px 20px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;">Закрыть</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeModal = () => modal.remove();
+    modal.querySelector('#mesh-close-chart').onclick = closeModal;
+    modal.querySelector('#mesh-close-chart-btn').onclick = closeModal;
+    modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+    modal.querySelector('#mesh-copy-chart-summary').onclick = () => {
+        const text = `Сводка успеваемости (${document.title || 'МЭШ'}):\nВсего оценок: ${totalMarks}\nСредний балл группы: ${groupAvg}\nКачество знаний: ${quality}%\nУспеваемость: ${success}%\nПятерки: ${counts[5]}, Четверки: ${counts[4]}, Тройки: ${counts[3]}, Двойки: ${counts[2]}`;
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = modal.querySelector('#mesh-copy-chart-summary');
+            if (btn) {
+                btn.innerText = '✅ Скопировано!';
+                setTimeout(() => { if (btn) btn.innerText = '📋 Скопировать отчет'; }, 2000);
+            }
+        });
+    };
+}

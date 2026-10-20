@@ -495,12 +495,38 @@
         renderOfficial();
     }
 
+    function getTodayAbsentProfiles() {
+        let attendances = [];
+        try { attendances = JSON.parse(window.sessionStorage.getItem('MESH_ATTENDANCES_CACHE') || '[]'); } catch(e){}
+        let emias = [];
+        try { emias = JSON.parse(window.sessionStorage.getItem('MESH_EMIAS_CACHE') || '[]'); } catch(e){}
+        let notifications = [];
+        try { notifications = JSON.parse(window.sessionStorage.getItem('MESH_NOTIFICATIONS_CACHE') || '[]'); } catch(e){}
+        
+        let todayMsk = getMskDateStr();
+        let todayParts = todayMsk.split('-');
+        let todayDot = `${todayParts[2]}.${todayParts[1]}.${todayParts[0]}`;
+
+        let absentMap = new Map();
+        attendances.filter(a => a.date === todayDot || a.date === todayMsk).forEach(a => {
+            absentMap.set(String(a.student_profile_id), { reason: REASONS_MAP[a.absence_reason_id] || "Пропуск", type: "official" });
+        });
+        emias.filter(e => e.date === todayMsk || e.date === todayDot).forEach(e => {
+            absentMap.set(String(e.student_profile_id), { reason: e.type || "Болезнь (ЕМИАС)", type: "emias" });
+        });
+        notifications.filter(n => n.date === todayMsk || n.date === todayDot).forEach(n => {
+            absentMap.set(String(n.student_profile_id), { reason: n.description || "Заявление", type: "notification" });
+        });
+        return absentMap;
+    }
+
     // Экспорт API
     window.MeshVisitsAPI = {
         isEnabled: () => isVisitsEnabled,
         getOfficialAttendances,
         getEmiasExemptions,
         getStudentAttendanceSummary,
+        getTodayAbsentProfiles,
         resolveContractId,
         fetchVisits,
         showStudentVisitsHistory

@@ -218,6 +218,34 @@
                 setTimeout(() => { btn.innerText = '⬇️ Скачать все журналы (' + groups.length + ')'; btn.style.pointerEvents = 'auto'; }, 4000);
             };
             panel.appendChild(btn);
+
+            let listBtn = document.createElement('button');
+            listBtn.innerText = '📋 Список предметов (' + groups.length + ')';
+            listBtn.style.cssText = "background:#34495e; color:white; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600; transition:0.2s;";
+            listBtn.onclick = () => {
+                let existingModal = document.getElementById('mesh-mentor-groups-modal');
+                if (existingModal) { existingModal.remove(); return; }
+                let m = document.createElement('div');
+                m.id = 'mesh-mentor-groups-modal';
+                m.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:#1e293b; color:#fff; border:1px solid #475569; border-radius:12px; padding:20px; z-index:99999999; max-width:500px; width:90vw; max-height:75vh; overflow-y:auto; box-shadow:0 20px 40px rgba(0,0,0,0.7); font-family:sans-serif;';
+                m.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #334155; padding-bottom:8px;">
+                        <b style="font-size:14px; color:#93c5fd;">Предметы группы (${groups.length})</b>
+                        <button id="mesh-close-groups-modal" style="background:transparent; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">&times;</button>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        ${groups.map((g, idx) => `
+                            <div style="font-size:12px; padding:6px 8px; background:#0f172a; border-radius:6px; border:1px solid #1e293b; display:flex; justify-content:space-between;">
+                                <span>${idx + 1}. ${g.name}</span>
+                                <span style="color:#64748b; font-size:10px;">ID: ${g.id}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                document.body.appendChild(m);
+                m.querySelector('#mesh-close-groups-modal').onclick = () => m.remove();
+            };
+            panel.appendChild(listBtn);
         } else {
             let info = document.createElement('div');
             info.innerHTML = "<i>Выберите курс и подождите<br>загрузки списка предметов...</i>";

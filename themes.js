@@ -57,5 +57,5 @@
         if (document.body && !document.getElementById('mesh-theme-preset-styles')) {
             chrome.storage.sync.get(['activeTheme'], (data) => applyTheme(data.activeTheme || 'default'));
         }
-    }, 2000);
+    });
 })();
