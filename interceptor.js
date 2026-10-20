@@ -9,6 +9,22 @@
         const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
         const response = await originalFetch.apply(this, args);
         
+        // ⚡ Перехват авторизационных заголовков для фоновых запросов
+        if (url.includes('/api/') && args[1] && args[1].headers) {
+            try {
+                let h = args[1].headers;
+                let tempHeaders = {};
+                if (typeof h.entries === 'function') {
+                    for (let [k, v] of h.entries()) tempHeaders[k] = v;
+                } else {
+                    tempHeaders = { ...h };
+                }
+                if (tempHeaders['Authorization'] || tempHeaders['authorization']) {
+                    window.sessionStorage.setItem('MESH_AUTH_HEADERS', JSON.stringify(tempHeaders));
+                }
+            } catch(e) {}
+        }
+
         // ⚡ СУПЕР-ОПТИМИЗАЦИЯ: Читаем ТОЛЬКО запросы с оценками, формами контроля и системами оценивания.
         // Игнорируем гигантские матрицы журнала, метрику и телеметрию Яндекса.
         if (url.includes('/api/profeducation/plan/teacher/v1/groups')) {

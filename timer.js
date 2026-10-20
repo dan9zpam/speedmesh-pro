@@ -181,16 +181,16 @@
         if (document.getElementById('mesh-timer-card')) return;
         const card = document.createElement('div');
         card.id = 'mesh-timer-card';
-        card.style.cssText = `position: fixed; top: 15px; right: 350px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 6px; cursor: move; user-select: none; align-items: flex-end; transition: 0.3s;`;
+        card.title = 'Двойной клик: открыть журнал текущего урока';
+        card.style.cssText = `position: fixed; top: 12px; right: 350px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 4px; cursor: pointer; user-select: none; align-items: flex-end; transition: 0.3s;`;
         card.innerHTML = `
-            <div id="mesh-timer-inner" style="position: relative; border-radius: 30px; padding: 6px 14px; display: flex; align-items: center; gap: 10px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; ">
+            <div id="mesh-timer-inner" style="position: relative; border-radius: 18px; padding: 4px 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; ">
                 <div id="mesh-timer-bg" style="position:absolute; top:0; left:0; height:100%; width:0%; z-index:0; transition:width 1s linear, background 0.3s;"></div>
-                <div style="position:relative; z-index:2; display:flex; align-items:center; gap:8px;">
-                    <div id="mesh-timer-dot" style="width:10px; height:10px; border-radius:50%; transition: all 0.3s;"></div>
-                    <div id="mesh-timer-val" style="font-family:monospace; font-size:16px; font-weight:bold; letter-spacing:0.5px; width:55px; transition: color 0.3s;">--:--</div>
-                    <div id="mesh-timer-info" style="font-size:12px; font-weight:600; white-space:nowrap; transition: color 0.3s;">Загрузка...</div>
-                    <a id="mesh-timer-journal-link" href="#" style="display:none; text-decoration:none; background:rgba(37,99,235,0.35); border:1px solid rgba(96,165,250,0.5); color:#93c5fd; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; transition:all 0.2s; white-space:nowrap;" title="Открыть журнал">📖 Журнал</a>
-                    <div id="mesh-timer-settings-btn" style="cursor:pointer; font-size:14px; margin-left:5px; opacity:0.3; transition:0.2s;" title="Настройки">⚙️</div>
+                <div style="position:relative; z-index:2; display:flex; align-items:center; gap:6px;">
+                    <div id="mesh-timer-dot" style="width:8px; height:8px; border-radius:50%; transition: all 0.3s;"></div>
+                    <div id="mesh-timer-val" style="font-family:monospace; font-size:13px; font-weight:bold; letter-spacing:0.5px; width:46px; transition: color 0.3s;">--:--</div>
+                    <div id="mesh-timer-info" style="font-size:11px; font-weight:600; white-space:nowrap; transition: color 0.3s;">Загрузка...</div>
+                    <div id="mesh-timer-settings-btn" style="cursor:pointer; font-size:12px; margin-left:3px; opacity:0.3; transition:0.2s;" title="Настройки">⚙️</div>
                 </div>
             </div>
             
@@ -319,13 +319,23 @@
         if (!isEnabled) card.style.display = 'none';
 
         
+        // Двойной клик по таймеру: переход в журнал текущего урока
+        card.ondblclick = (e) => {
+            if (e.target.id === 'mesh-timer-settings-btn' || e.target.closest('#mesh-timer-settings-panel')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            navigateToCurrentLessonJournal();
+        };
+
         // Кастомная логика перетаскивания (без лишних кнопок)
         let isDragging = false;
+        let hasMoved = false;
         let startX, startY, initialX, initialY;
         
         card.onmousedown = (e) => {
             if (e.target.tagName === 'INPUT' || e.target.id === 'mesh-timer-settings-btn') return;
             isDragging = true;
+            hasMoved = false;
             startX = e.clientX; startY = e.clientY;
             const rect = card.getBoundingClientRect();
             initialX = rect.left; initialY = rect.top;
@@ -336,6 +346,7 @@
             if (!isDragging) return;
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
             card.style.left = (initialX + dx) + 'px';
             card.style.top = (initialY + dy) + 'px';
             card.style.right = 'auto'; // Сбрасываем привязку к правому краю
@@ -345,7 +356,9 @@
             if (isDragging) {
                 isDragging = false;
                 card.style.transition = '0.3s';
-                chrome.storage.local.set({ timerLeft: card.style.left, timerTop: card.style.top });
+                if (hasMoved) {
+                    chrome.storage.local.set({ timerLeft: card.style.left, timerTop: card.style.top });
+                }
             }
         });
 chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
@@ -440,83 +453,101 @@ chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
             } else { elTime.textContent = "--:--"; elInfo.textContent = "Уроки окончены"; elBar.style.width = '100%'; elDot.style.background = th.idleDot; elDot.style.boxShadow = 'none'; }
         }
 
-        // Динамическая кнопка быстрого перехода: Расписание <-> Журнал
-        try {
-            const journalBtn = document.getElementById('mesh-timer-journal-link');
-            if (journalBtn) {
-                if (window.location.href.includes('/schedule')) {
-                    const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
-                    let currentCard = null;
-                    for (let c of allCards) {
-                        const text = c.innerText;
-                        const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
-                        if (m) {
-                            const s = getMinutes(m[1]);
-                            const e = getMinutes(m[2]);
-                            if (currentMins >= s && currentMins <= e) {
-                                currentCard = c;
-                                break;
-                            }
-                        }
+    }
+
+    function navigateToCurrentLessonJournal() {
+        const now = new Date();
+        const currentMins = now.getHours() * 60 + now.getMinutes();
+
+        // 1. Если уже на странице расписания: ищем карточку текущего урока
+        if (window.location.href.includes('/schedule')) {
+            const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
+            let targetCard = null;
+
+            for (let c of allCards) {
+                const text = c.innerText;
+                const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
+                if (m) {
+                    const s = getMinutes(m[1]);
+                    const e = getMinutes(m[2]);
+                    if (currentMins >= s && currentMins <= e) {
+                        targetCard = c;
+                        break;
                     }
-                    if (!currentCard && allCards.length > 0) {
-                        for (let c of allCards) {
-                            const text = c.innerText;
-                            const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
-                            if (m && getMinutes(m[1]) > currentMins) {
-                                currentCard = c;
-                                break;
-                            }
-                        }
-                    }
-                    if (currentCard) {
-                        const jLink = currentCard.querySelector('a[href*="journal"]') || Array.from(currentCard.querySelectorAll('button, a')).find(el => el.innerText.includes('журнал') || (el.href && el.href.includes('journal')));
-                        if (jLink) {
-                            const targetHref = jLink.href || jLink.getAttribute('href');
-                            if (targetHref) {
-                                journalBtn.href = targetHref;
-                                journalBtn.onclick = null;
-                            } else {
-                                journalBtn.href = '#';
-                                journalBtn.onclick = (e) => { e.preventDefault(); jLink.click(); };
-                            }
-                            journalBtn.innerText = '📖 Журнал';
-                            journalBtn.title = 'Открыть журнал текущей пары';
-                            journalBtn.style.display = 'inline-block';
-                        } else {
-                            journalBtn.style.display = 'none';
-                        }
-                    } else {
-                        journalBtn.style.display = 'none';
-                    }
-                } else if (window.location.href.includes('/journal')) {
-                    journalBtn.href = 'https://school.mos.ru/spo/teacher/account/schedule';
-                    journalBtn.innerText = '📅 Расписание';
-                    journalBtn.title = 'Вернуться в расписание';
-                    journalBtn.style.display = 'inline-block';
-                    journalBtn.onclick = null;
-                } else {
-                    journalBtn.style.display = 'none';
                 }
             }
-        } catch(e) {}
+            if (!targetCard && allCards.length > 0) {
+                for (let c of allCards) {
+                    const text = c.innerText;
+                    const m = text.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
+                    if (m && getMinutes(m[1]) > currentMins) {
+                        targetCard = c;
+                        break;
+                    }
+                }
+            }
+            if (!targetCard && allCards.length > 0) {
+                targetCard = allCards[0];
+            }
+
+            if (targetCard) {
+                const allEls = Array.from(targetCard.querySelectorAll('a, button, span, div'));
+                const jLink = allEls.find(el => el.textContent.trim() === 'К журналу') || 
+                              allEls.find(el => (el.innerText && el.innerText.toLowerCase().includes('журнал')) || (el.href && el.href.includes('journal')));
+                if (jLink) {
+                    if (jLink.href) { window.location.href = jLink.href; return; }
+                    jLink.click();
+                    if (jLink.parentElement) jLink.parentElement.click();
+                    return;
+                }
+            }
+            window.location.href = 'https://school.mos.ru/spo/teacher/study-process/journal/my';
+            return;
+        }
+
+        // 2. Если уже в журнале: двойной клик возвращает в расписание
+        if (window.location.href.includes('/journal')) {
+            window.location.href = 'https://school.mos.ru/spo/teacher/account/schedule';
+            return;
+        }
+
+        // 3. С любой другой страницы (напр. /account): переходим в расписание с флагом авто-открытия
+        window.sessionStorage.setItem('SPEEDMESH_AUTO_OPEN_JOURNAL', '1');
+        window.location.href = 'https://school.mos.ru/spo/teacher/account/schedule';
     }
+
+    // Авто-переход в журнал при загрузке расписания (если был двойной клик)
+    if (window.location.href.includes('/schedule') && window.sessionStorage.getItem('SPEEDMESH_AUTO_OPEN_JOURNAL') === '1') {
+        window.sessionStorage.removeItem('SPEEDMESH_AUTO_OPEN_JOURNAL');
+        let attempts = 0;
+        const autoCheck = setInterval(() => {
+            attempts++;
+            const allCards = Array.from(document.querySelectorAll('[data-test-component^="scheduleDay-"][data-test-component*="-Card-"]'));
+            if (allCards.length > 0 || attempts > 25) {
+                clearInterval(autoCheck);
+                if (allCards.length > 0) {
+                    navigateToCurrentLessonJournal();
+                }
+            }
+        }, 200);
+    }
+
     let isTimerInitialized = false;
     let timerInterval = setInterval(() => { 
-    try { 
-        if (document.body) { 
-            if (!document.getElementById('mesh-timer-card')) {
-                isTimerInitialized = false; 
-            }
-            if(!isTimerInitialized) { 
-                initDOM(); 
-                if(document.getElementById('mesh-timer-card')) isTimerInitialized = true; 
+        try { 
+            if (document.body) { 
+                if (!document.getElementById('mesh-timer-card')) {
+                    isTimerInitialized = false; 
+                }
+                if (!isTimerInitialized) { 
+                    initDOM(); 
+                    if (document.getElementById('mesh-timer-card')) isTimerInitialized = true; 
+                } 
+                updateTimer(); 
             } 
-            updateTimer(); 
+        } catch(e) { 
+            if (e.message && e.message.includes('context')) clearInterval(timerInterval);
+            else console.error("Speedmesh Timer Error:", e);
         } 
-    } catch(e) { 
-        if(e.message && e.message.includes('context')) clearInterval(timerInterval);
-        else console.error("Speedmesh Timer Error:", e);
-    } 
-}, 1000);
+    }, 1000);
 })();

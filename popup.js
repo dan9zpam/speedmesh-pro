@@ -161,6 +161,11 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast("📊 Строим график...");
     });
 
+    document.getElementById('buildSummaryBtn')?.addEventListener('click', () => {
+        notifyContentScript({ action: 'buildSummarySheet' });
+        showToast("📊 Сводная ведомость...");
+    });
+
     document.getElementById('btn-guide')?.addEventListener('click', () => { 
         chrome.tabs.create({ url: chrome.runtime.getURL("guide.html") }); 
     });

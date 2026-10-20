@@ -1,46 +1,207 @@
 // mentor_journals.js
 (function() {
+    // Вспомогательное неблокирующее уведомление (без использования window.alert)
+    function showMeshToast(msg, type = 'info') {
+        let existing = document.getElementById('speedmesh-toast-notify');
+        if (existing) existing.remove();
+        const toast = document.createElement('div');
+        toast.id = 'speedmesh-toast-notify';
+        const bg = type === 'error' ? 'rgba(239, 68, 68, 0.95)' : (type === 'success' ? 'rgba(16, 185, 129, 0.95)' : 'rgba(30, 41, 59, 0.95)');
+        toast.style.cssText = `position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:999999999; background:${bg}; color:#fff; padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600; box-shadow:0 8px 24px rgba(0,0,0,0.5); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.2); transition:opacity 0.3s; font-family:sans-serif; text-align:center; pointer-events:none;`;
+        toast.innerText = msg;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 350);
+        }, 3500);
+    }
+
+    function getMentorAuthContext() {
+        let aupd_token = null;
+        let profile_id = localStorage.getItem('MES_API_PROFILE_ID') || null;
+        let aid = localStorage.getItem('MES_API_YEAR_ID') || null;
+        let hostId = "63";
+        let roleId = "30";
+
+        const tk = document.cookie.match(/(?:^|; )aupd_token=([^;]*)/); 
+        if (tk) aupd_token = decodeURIComponent(tk[1]); 
+
+        const pr = document.cookie.match(/(?:^|; )profile_id=([^;]*)/);
+        if (pr && !profile_id) profile_id = decodeURIComponent(pr[1]);
+
+        const aidCookie = document.cookie.match(/(?:^|; )aid=([^;]*)/);
+        if (aidCookie && !aid) aid = decodeURIComponent(aidCookie[1]);
+
+        const roleMatch = document.cookie.match(/(?:^|; )aupd_current_role=([^;]*)/);
+        if (roleMatch) {
+            let parts = decodeURIComponent(roleMatch[1]).split(":");
+            if (parts.length === 2) {
+                hostId = parts[0];
+                roleId = parts[1];
+            }
+        }
+
+        try {
+            let meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || window.sessionStorage.getItem('MESH_AUTH_HEADERS') || "{}");
+            let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization'];
+            if (!aupd_token && auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', '');
+            let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id'];
+            if (!profile_id && pId) profile_id = pId;
+        } catch(e) {}
+
+        if (!aupd_token) {
+            try {
+                for (let key of Object.keys(localStorage)) {
+                    if (key.toLowerCase().includes('token') || key.toLowerCase().includes('auth')) {
+                        let val = localStorage.getItem(key);
+                        if (val && typeof val === 'string' && val.length > 25 && !val.startsWith('{')) {
+                            aupd_token = val.replace(/^Bearer\s+/i, '');
+                            break;
+                        }
+                    }
+                }
+            } catch(e) {}
+        }
+        
+        let reqHeaders = { 
+            "Accept": "application/json, text/plain, */*", 
+            "x-mes-subsystem": "teacherspow",
+            "x-mes-hostid": hostId,
+            "X-Mes-RoleId": roleId
+        };
+        if (aupd_token) reqHeaders["Authorization"] = `Bearer ${aupd_token}`;
+        if (profile_id) reqHeaders["Profile-Id"] = profile_id;
+        if (aid) reqHeaders["aid"] = aid;
+
+        let now = new Date();
+        let currentYear = now.getFullYear();
+        let month = now.getMonth(); 
+        let yearStart = month < 7 ? currentYear - 1 : currentYear;
+        let yearEnd = yearStart + 1;
+        let startAt = `${yearStart}-09-01T00:00:00.000Z`;
+        let stopAt = now.toISOString(); // Формирование среза на текущую дату и время
+
+        const todayRuStr = now.toLocaleDateString('ru-RU');
+        const todayStr = now.toISOString().slice(0, 10);
+
+        return { reqHeaders, yearStart, yearEnd, startAt, stopAt, aid, todayRuStr, todayStr };
+    }
+
+    function filterCuratorGroups(rawGroups) {
+        if (!Array.isArray(rawGroups)) return [];
+        let filtered = rawGroups.filter(g => {
+            if (g.is_metagroup) return false;
+            if (g.class_unit_ids && g.class_unit_ids.length > 1) return false;
+            let normName = (g.name || "").toUpperCase().replace(/\s+/g, '');
+            let matches = normName.match(/(?:ИСП|РУПО)\d+/g) || [];
+            let uniqueGroups = new Set(matches);
+            if (uniqueGroups.size > 1) return false;
+            return true;
+        });
+        return filtered.length > 0 ? filtered : rawGroups.filter(g => !g.is_metagroup);
+    }
+
+    async function getGroupsOrFetch(reqHeaders, aid) {
+        let groupsStr = window.sessionStorage.getItem('MESH_MENTOR_GROUPS');
+        if (groupsStr) {
+            try { 
+                let rawGroups = JSON.parse(groupsStr); 
+                let filtered = filterCuratorGroups(rawGroups);
+                if (filtered.length > 0) return filtered;
+            } catch(e){}
+        }
+
+        const endpoints = [
+            `https://school.mos.ru/api/profeducation/plan/teacher/v1/groups?academic_year_id=${aid || ''}`,
+            `https://school.mos.ru/api/profeducation/plan/teacher/v1/groups`,
+            `https://school.mos.ru/api/profeducation/core/teacher/v1/curator_groups`
+        ];
+
+        for (let ep of endpoints) {
+            try {
+                let res = await fetch(ep, { headers: reqHeaders });
+                if (!res.ok && (res.status === 401 || res.status === 403)) {
+                    let altHeaders = { ...reqHeaders, "x-mes-subsystem": "journalw" };
+                    res = await fetch(ep, { headers: altHeaders });
+                }
+                if (res.ok) {
+                    let data = await res.json();
+                    let raw = Array.isArray(data) ? data : (data.items || data.data || data.payload || []);
+                    if (raw.length > 0) {
+                        window.sessionStorage.setItem('MESH_MENTOR_GROUPS', JSON.stringify(raw));
+                        let filtered = filterCuratorGroups(raw);
+                        if (filtered.length > 0) return filtered;
+                    }
+                }
+            } catch(e) {}
+        }
+        return [];
+    }
+
+    // Обработка сообщений из Popup расширения и страницы
+    chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
+        if (req.action === "buildSummarySheet") {
+            triggerSummaryFromAnywhere();
+            sendResponse({ success: true });
+        }
+    });
+
+    window.addEventListener('speedmesh:buildSummarySheet', () => {
+        triggerSummaryFromAnywhere();
+    });
+
+    async function triggerSummaryFromAnywhere(triggerBtn = null) {
+        if (triggerBtn) {
+            triggerBtn.innerText = '⏳ Подготовка...';
+            triggerBtn.style.pointerEvents = 'none';
+        } else {
+            showMeshToast('📊 Загрузка данных для сводной ведомости...');
+        }
+
+        const authCtx = getMentorAuthContext();
+        let groups = await getGroupsOrFetch(authCtx.reqHeaders, authCtx.aid);
+
+        if (!groups || groups.length === 0) {
+            if (triggerBtn) {
+                triggerBtn.innerText = '📊 Сводная ведомость группы';
+                triggerBtn.style.pointerEvents = 'auto';
+            }
+            showMeshToast('⚠️ Не удалось найти учебные группы. Откройте вкладку "Журналы групп" или расписание.', 'error');
+            return;
+        }
+
+        await buildAndShowSummarySheet(groups, triggerBtn, authCtx);
+    }
+
+    // Регулярная проверка и отрисовка панели на вкладках журналов куратора/групп
     let initInterval = setInterval(() => {
         if (!document.body) return;
-        const isMentorJournals = window.location.href.includes('spo/teacher/mentor/journals');
+        const isJournalsTab = window.location.href.includes('spo/teacher/mentor/journals') ||
+                              window.location.href.includes('spo/teacher/group-management/journals') ||
+                              window.location.href.includes('group-management') ||
+                              window.location.href.includes('mentor');
         
         let p = document.getElementById('speedmesh-mentor-panel');
-        if (!isMentorJournals) {
+        if (!isJournalsTab) {
             if (p) p.remove();
             return;
         }
 
-        if (p) {
-            // Update group count if it changed
-            let groupsStr = window.sessionStorage.getItem('MESH_MENTOR_GROUPS');
-            if (groupsStr && p.dataset.groups !== groupsStr) {
-                p.remove(); // Force recreate to update count
-            } else {
-                return;
-            }
-        }
-
-        // Try to read groups from sessionStorage (saved by interceptor)
         let groupsStr = window.sessionStorage.getItem('MESH_MENTOR_GROUPS');
         let groups = [];
         if (groupsStr) {
             try { 
                 let rawGroups = JSON.parse(groupsStr); 
-                groups = rawGroups.filter(g => {
-                    // 1. Официальный флаг метагруппы
-                    if (g.is_metagroup) return false;
-                    // 2. Если привязано больше одного класса
-                    if (g.class_unit_ids && g.class_unit_ids.length > 1) return false;
-                    
-                    // 3. Проверка по названию на несколько номеров ИСП или РУПО
-                    let normName = (g.name || "").toUpperCase().replace(/\s+/g, '');
-                    let matches = normName.match(/(?:ИСП|РУПО)\d+/g) || [];
-                    let uniqueGroups = new Set(matches);
-                    if (uniqueGroups.size > 1) return false;
-                    
-                    return true;
-                });
+                groups = filterCuratorGroups(rawGroups);
             } catch(e){}
+        }
+
+        if (p) {
+            if (groupsStr && p.dataset.groups !== groupsStr) {
+                p.remove(); // Перерисовать с обновленным числом групп
+            } else {
+                return;
+            }
         }
 
         const panel = document.createElement('div');
@@ -52,59 +213,6 @@
         title.innerHTML = `📚 Журналы куратора <br><span style="font-size:11px; color:#bdc3c7;">Найдено групп: ${groups.length}</span>`;
         title.style.cssText = "font-size:14px; font-weight:bold; color:#9b59b6; text-align:center; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:5px;";
         panel.appendChild(title);
-
-        function getMentorAuthContext() {
-            let aupd_token = null;
-            let profile_id = localStorage.getItem('MES_API_PROFILE_ID') || null;
-            let aid = localStorage.getItem('MES_API_YEAR_ID') || null;
-            let hostId = "63";
-            let roleId = "30";
-
-            const tk = document.cookie.match(/(?:^|; )aupd_token=([^;]*)/); 
-            if (tk) aupd_token = decodeURIComponent(tk[1]); 
-
-            const pr = document.cookie.match(/(?:^|; )profile_id=([^;]*)/);
-            if (pr && !profile_id) profile_id = decodeURIComponent(pr[1]);
-
-            const aidCookie = document.cookie.match(/(?:^|; )aid=([^;]*)/);
-            if (aidCookie && !aid) aid = decodeURIComponent(aidCookie[1]);
-
-            const roleMatch = document.cookie.match(/(?:^|; )aupd_current_role=([^;]*)/);
-            if (roleMatch) {
-                let parts = decodeURIComponent(roleMatch[1]).split(":");
-                if (parts.length === 2) {
-                    hostId = parts[0];
-                    roleId = parts[1];
-                }
-            }
-
-            try {
-                let meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}");
-                let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization'];
-                if (!aupd_token && auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', '');
-                let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id'];
-                if (!profile_id && pId) profile_id = pId;
-            } catch(e) {}
-            
-            let reqHeaders = { 
-                "Accept": "application/json, text/plain, */*", 
-                "x-mes-subsystem": "teacherspow",
-                "x-mes-hostid": hostId,
-                "X-Mes-RoleId": roleId
-            };
-            if (aupd_token) reqHeaders["Authorization"] = `Bearer ${aupd_token}`;
-            if (profile_id) reqHeaders["Profile-Id"] = profile_id;
-            if (aid) reqHeaders["aid"] = aid;
-
-            let currentYear = new Date().getFullYear();
-            let month = new Date().getMonth(); 
-            let yearStart = month < 7 ? currentYear - 1 : currentYear;
-            let yearEnd = yearStart + 1;
-            let startAt = `${yearStart}-09-01T00:00:00.000Z`;
-            let stopAt = `${yearEnd}-08-31T00:00:00.000Z`;
-
-            return { reqHeaders, yearStart, yearEnd, startAt, stopAt };
-        }
 
         if (groups.length > 0) {
             let btn = document.createElement('button');
@@ -119,24 +227,9 @@
                 
                 const { reqHeaders, yearStart, yearEnd, startAt, stopAt } = getMentorAuthContext();
 
-                let debugLog = {
-                    hasJSZip: typeof JSZip !== 'undefined',
-                    hasWindowJSZip: typeof window.JSZip !== 'undefined',
-                    downloaded: 0,
-                    failed: 0,
-                    errors: []
-                };
-
-                // Инициализируем архиватор
-                let zip = null;
-                if (typeof JSZip !== 'undefined') {
-                    zip = new JSZip();
-                } else if (typeof window.JSZip !== 'undefined') {
-                    zip = new window.JSZip();
-                } else {
-                    debugLog.errors.push("JSZip is not defined in content script scope");
-                    console.warn("JSZip не найден в текущем контексте, переключаемся на пофайловое скачивание.");
-                }
+                let downloaded = 0;
+                let failed = 0;
+                let zip = (typeof JSZip !== 'undefined') ? new JSZip() : ((typeof window.JSZip !== 'undefined') ? new window.JSZip() : null);
 
                 for (let i = 0; i < groups.length; i++) {
                     const g = groups[i];
@@ -144,10 +237,9 @@
                     try {
                         const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
                         let res = await fetch(url, { headers: reqHeaders });
-                        // Fallback на journalw, если teacherspow отклонен
                         if (!res.ok && (res.status === 401 || res.status === 403)) {
-                            reqHeaders["x-mes-subsystem"] = "journalw";
-                            res = await fetch(url, { headers: reqHeaders });
+                            let altHeaders = { ...reqHeaders, "x-mes-subsystem": "journalw" };
+                            res = await fetch(url, { headers: altHeaders });
                         }
                         if (res.ok) {
                             const blob = await res.blob();
@@ -165,16 +257,11 @@
                                 document.body.removeChild(a);
                             }
                             downloaded++;
-                            debugLog.downloaded = downloaded;
                         } else {
                             failed++;
-                            debugLog.failed = failed;
-                            debugLog.errors.push(`Group ${g.id} failed with HTTP ${res.status}`);
                         }
                     } catch(e) {
                         failed++;
-                        debugLog.failed = failed;
-                        debugLog.errors.push(`Group ${g.id} error: ${e.message}`);
                     }
                     await new Promise(r => setTimeout(r, 200));
                 }
@@ -183,7 +270,6 @@
                     btn.innerText = `📦 Сборка ZIP архива...`;
                     try {
                         const zipBlob = await zip.generateAsync({ type: "blob" });
-                        debugLog.zipBlobSize = zipBlob.size;
                         const blobUrl = URL.createObjectURL(zipBlob);
                         
                         let courseName = "Журналы_Куратора";
@@ -191,16 +277,13 @@
                         if (match) courseName = match[0];
                         const fileName = `${courseName}_Журналы_${yearStart}-${yearEnd}.zip`;
                         
-                        // Попытка автоматического скачивания
                         const a = document.createElement('a');
                         a.href = blobUrl;
                         a.download = fileName;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
-                        debugLog.autoDownloadClicked = true;
 
-                        // Всегда добавляем явную кнопку скачивания в панель на случай блокировки popup/download браузером
                         let dlLink = document.getElementById('speedmesh-zip-download-link');
                         if (dlLink) dlLink.remove();
                         dlLink = document.createElement('a');
@@ -211,12 +294,10 @@
                         dlLink.style.cssText = "display:block; text-align:center; background:#2980b9; color:white; padding:8px 12px; border-radius:6px; font-weight:bold; text-decoration:none; margin-top:5px;";
                         panel.appendChild(dlLink);
                     } catch(e) {
-                        debugLog.errors.push("ZIP generation error: " + e.message);
                         console.error("Ошибка при создании ZIP", e);
                     }
                 }
                 
-                window.sessionStorage.setItem('SPEEDMESH_MENTOR_DEBUG', JSON.stringify(debugLog));
                 btn.innerText = `✅ Успешно: ${downloaded}` + (failed > 0 ? `, ❌ Ошибок: ${failed}` : '');
                 setTimeout(() => { btn.innerText = '⬇️ Скачать все журналы (' + groups.length + ')'; btn.style.pointerEvents = 'auto'; }, 4000);
             };
@@ -228,7 +309,7 @@
             summaryBtn.style.cssText = "background:#8e44ad; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s; box-shadow:0 4px 12px rgba(142,68,173,0.3);";
             summaryBtn.onmouseover = () => summaryBtn.style.transform = 'scale(1.05)';
             summaryBtn.onmouseout = () => summaryBtn.style.transform = 'scale(1)';
-            summaryBtn.onclick = () => buildAndShowSummarySheet(groups, summaryBtn);
+            summaryBtn.onclick = () => triggerSummaryFromAnywhere(summaryBtn);
             panel.appendChild(summaryBtn);
 
             let listBtn = document.createElement('button');
@@ -260,32 +341,43 @@
             panel.appendChild(listBtn);
         } else {
             let info = document.createElement('div');
-            info.innerHTML = "<i>Выберите курс и подождите<br>загрузки списка предметов...</i>";
+            info.innerHTML = "<i>Выберите группу или нажмите «Сводная ведомость» в расширении...</i>";
             info.style.cssText = "font-size:12px; color:#bdc3c7; text-align:center;";
             panel.appendChild(info);
+
+            let fetchBtn = document.createElement('button');
+            fetchBtn.innerText = '📊 Сводная ведомость';
+            fetchBtn.style.cssText = "background:#8e44ad; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;";
+            fetchBtn.onclick = () => triggerSummaryFromAnywhere(fetchBtn);
+            panel.appendChild(fetchBtn);
         }
 
         document.body.appendChild(panel);
         
-        // Make draggable if Window Manager is loaded
         if (window.makeMeshDraggable) {
             setTimeout(() => {
                 if (window.makeMeshDraggable) window.makeMeshDraggable(panel, "📚");
             }, 1000);
         }
 
-    }, 1500); // Check every 1.5s for page change
+    }, 1500);
 
     // --- ПАРСИНГ ЖУРНАЛОВ И ПОСТРОЕНИЕ СВОДНОЙ ВЕДОМОСТИ ---
 
     function isStudentName(str) {
-        if (!str || str.length < 5 || str.length > 70) return false;
+        if (!str || str.length < 4 || str.length > 80) return false;
         const words = str.split(/\s+/).filter(Boolean);
-        if (words.length < 2 || words.length > 4) return false;
-        const invalidKeywords = ['тема', 'итог', 'оценка', 'средн', 'групп', 'дисциплин', 'преподават', 'период', 'семестр', 'форма', 'контрол', 'дата', 'часы', 'всего', 'п/п', 'номер', 'урок', 'заняти', 'неаттест', 'экзамен', 'зачет'];
+        if (words.length < 2 || words.length > 5) return false;
+        const invalidKeywords = [
+            'тема', 'итог', 'оценка', 'средн', 'групп', 'дисциплин', 'преподават', 
+            'период', 'семестр', 'форма', 'контрол', 'дата', 'часы', 'всего', 'п/п', 
+            'номер', 'урок', 'заняти', 'неаттест', 'экзамен', 'зачет', 'план', 'календар',
+            'промежуточн', 'годовая', 'аттестация', 'московск', 'электронн'
+        ];
         const lower = str.toLowerCase();
         if (invalidKeywords.some(k => lower.includes(k))) return false;
-        return words.every(w => /^[А-ЯЁ][а-яё\-]+$/.test(w));
+        // Поддержка любого регистра (Иванов Иван, ИВАНОВ ИВАН, Иванов И.В.)
+        return words.every(w => /^[А-ЯЁа-яё\-]+(\.)?$/.test(w) && w.replace(/[^А-ЯЁа-яё]/g, '').length >= 1);
     }
 
     async function parseJournalXlsx(blob) {
@@ -343,7 +435,7 @@
 
             let studentName = null;
             let nameColIdx = -1;
-            for (let i = 0; i < Math.min(rowCells.length, 4); i++) {
+            for (let i = 0; i < Math.min(rowCells.length, 5); i++) {
                 const candidate = rowCells[i].val.replace(/\s+/g, ' ').trim();
                 if (isStudentName(candidate)) {
                     studentName = candidate;
@@ -353,7 +445,6 @@
             }
             if (!studentName) continue;
 
-            // Оценки студента
             const afterCells = rowCells.slice(nameColIdx + 1);
             let marks = [];
             let explicitAvg = null;
@@ -382,27 +473,35 @@
         return students;
     }
 
-    async function buildAndShowSummarySheet(groups, triggerBtn) {
-        if (!groups || groups.length === 0) return alert("Список предметов пуст");
+    async function buildAndShowSummarySheet(groups, triggerBtn, authCtx) {
+        if (!groups || groups.length === 0) {
+            showMeshToast("Список предметов пуст", "error");
+            return;
+        }
         
-        const origBtnText = triggerBtn.innerText;
-        triggerBtn.innerText = '⏳ Подготовка...';
-        triggerBtn.style.pointerEvents = 'none';
+        const origBtnText = triggerBtn ? triggerBtn.innerText : '';
+        if (triggerBtn) {
+            triggerBtn.innerText = '⏳ Загрузка журналов...';
+            triggerBtn.style.pointerEvents = 'none';
+        }
 
-        const { reqHeaders, yearStart, yearEnd, startAt, stopAt } = getMentorAuthContext();
+        const { reqHeaders, yearStart, yearEnd, startAt, stopAt, todayRuStr, todayStr } = authCtx || getMentorAuthContext();
         window._meshDownloadedBlobs = window._meshDownloadedBlobs || new Map();
 
         // 1. Загрузка недостающих файлов
         for (let i = 0; i < groups.length; i++) {
             const g = groups[i];
             if (!window._meshDownloadedBlobs.has(g.id)) {
-                triggerBtn.innerText = `⏳ Загрузка ${i + 1}/${groups.length}`;
+                const loadMsg = `⏳ Загрузка ${i + 1}/${groups.length}`;
+                if (triggerBtn) triggerBtn.innerText = loadMsg;
+                else showMeshToast(loadMsg);
+
                 try {
                     const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
                     let res = await fetch(url, { headers: reqHeaders });
                     if (!res.ok && (res.status === 401 || res.status === 403)) {
-                        reqHeaders["x-mes-subsystem"] = "journalw";
-                        res = await fetch(url, { headers: reqHeaders });
+                        let altHeaders = { ...reqHeaders, "x-mes-subsystem": "journalw" };
+                        res = await fetch(url, { headers: altHeaders });
                     }
                     if (res.ok) {
                         const blob = await res.blob();
@@ -414,7 +513,8 @@
             }
         }
 
-        triggerBtn.innerText = '⏳ Парсинг оценок...';
+        if (triggerBtn) triggerBtn.innerText = '⏳ Парсинг оценок...';
+        else showMeshToast('⏳ Парсинг оценок...');
 
         // 2. Парсинг каждого журнала и построение матрицы
         const subjectsList = [];
@@ -440,11 +540,14 @@
             }
         }
 
-        triggerBtn.innerText = origBtnText;
-        triggerBtn.style.pointerEvents = 'auto';
+        if (triggerBtn) {
+            triggerBtn.innerText = origBtnText;
+            triggerBtn.style.pointerEvents = 'auto';
+        }
 
         if (studentMap.size === 0) {
-            return alert("Не удалось извлечь данные обучающихся из выгруженных журналов.");
+            showMeshToast("Не удалось извлечь данные обучающихся из выгруженных журналов.", "error");
+            return;
         }
 
         // 3. Подготовка итоговых данных по студентам
@@ -485,10 +588,10 @@
         });
 
         // 4. Отрисовка модального окна сводной ведомости
-        renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents);
+        renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr);
     }
 
-    function renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, students) {
+    function renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, students, todayRuStr, todayStr) {
         let existing = document.getElementById('speedmesh-summary-modal');
         if (existing) existing.remove();
 
@@ -556,8 +659,8 @@
                     <div style="display:flex; align-items:center; gap:12px;">
                         <span style="font-size:26px;">📊</span>
                         <div>
-                            <div style="font-size:17px; font-weight:700; color:#fff;">Сводная ведомость успеваемости: <span style="color:#60a5fa;">${courseName}</span></div>
-                            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">Учебный год ${yearStart}–${yearEnd} · Дисциплин: ${subjectsList.length} · Студентов: ${totalStudents}</div>
+                            <div style="font-size:17px; font-weight:700; color:#fff;">Сводная ведомость успеваемости: <span style="color:#60a5fa;">${courseName}</span> <span style="font-size:13px; color:#94a3b8; font-weight:normal;">(на ${todayRuStr})</span></div>
+                            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">Учебный год ${yearStart}–${yearEnd} · Сформирована: ${todayRuStr} · Дисциплин: ${subjectsList.length} · Студентов: ${totalStudents}</div>
                         </div>
                     </div>
                     <button id="mesh-close-summary-btn" style="background:transparent; border:none; color:#94a3b8; font-size:26px; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
@@ -570,7 +673,7 @@
                     </div>
                     <div style="background:#1e293b; border:1px solid #334155; border-radius:10px; padding:10px; text-align:center;">
                         <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Без задолженностей</div>
-                        <div style="font-size:20px; font-weight:700; color:#10b981; margin-top:2px;">${totalStudents - failedStudents.length} <span style="font-size:11px; color:#94a3b8;">(${Math.round(((totalStudents - failedStudents.length)/totalStudents)*100)}%)</span></div>
+                        <div style="font-size:20px; font-weight:700; color:#10b981; margin-top:2px;">${totalStudents - failedStudents.length} <span style="font-size:11px; color:#94a3b8;">(${totalStudents > 0 ? Math.round(((totalStudents - failedStudents.length)/totalStudents)*100) : 0}%)</span></div>
                     </div>
                     <div style="background:#1e293b; border:1px solid #334155; border-radius:10px; padding:10px; text-align:center;">
                         <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">С задолженностями</div>
@@ -656,6 +759,7 @@
 
         modal.querySelector('#mesh-summary-export-csv').onclick = () => {
             let csv = '\uFEFF';
+            csv += `"Сводная ведомость успеваемости группы ${courseName} (на ${todayRuStr})"\r\n\r\n`;
             let headers = ['№', 'ФИО обучающегося', ...subjectsList, 'Задолженностей', 'Средний балл', 'Статус'];
             csv += headers.map(h => `"${h.replace(/"/g, '""')}"`).join(';') + '\r\n';
 
@@ -677,14 +781,14 @@
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `Сводная_ведомость_${courseName}_${yearStart}-${yearEnd}.csv`;
+            a.download = `Сводная_ведомость_${courseName}_на_${todayStr}.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
         };
 
         modal.querySelector('#mesh-summary-copy-debtors').onclick = () => {
-            let text = `📋 Список академических задолженностей (${courseName}):\n`;
+            let text = `📋 Список академических задолженностей (${courseName}, на ${todayRuStr}):\n`;
             if (failedStudents.length === 0) {
                 text += `В группе нет студентов с академическими задолженностями! Все аттестованы.`;
             } else {
