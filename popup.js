@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const uiElements = {};
     toggles.forEach(key => { uiElements[key] = document.getElementById(key); });
 
-    chrome.storage.sync.get([...toggles, 'customBellsText', 'timerNoteText', 'timerTheme', 'menuTheme', 'activeTheme'], (data) => {
+    chrome.storage.sync.get([...toggles, 'timerNoteText', 'timerTheme', 'menuTheme', 'activeTheme'], (data) => {
         if (data.menuTheme) {
             document.body.setAttribute('data-theme', data.menuTheme);
             if (document.getElementById('menuTheme')) document.getElementById('menuTheme').value = data.menuTheme;
@@ -79,7 +79,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        if (document.getElementById('customBells') && data.customBellsText !== undefined) document.getElementById('customBells').value = data.customBellsText;
         if (document.getElementById('timerNote') && data.timerNoteText !== undefined) document.getElementById('timerNote').value = data.timerNoteText;
         if (document.getElementById('timerTheme') && data.timerTheme !== undefined) document.getElementById('timerTheme').value = data.timerTheme;
     });
@@ -124,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    ['customBells', 'timerNote'].forEach(id => {
+    ['timerNote'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('input', (e) => {
