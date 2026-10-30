@@ -9,9 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderCleanup(data) {
         cleanupSelect.value = String(data.hours);
         const last = data.last;
-        cleanupStatus.textContent = last
+        const scheduleText = !data.hours ? 'Автоочистка выключена.'
+            : data.deferred ? 'Очистка отложена до закрытия всех вкладок МЭШ.'
+            : `Следующая очистка: ${new Date(data.nextAt).toLocaleString('ru-RU')}.`;
+        const lastText = last
             ? `Последняя очистка: ${new Date(last.at).toLocaleString('ru-RU')}. Удалено: ${last.removed}. Ошибок: ${last.failed}.`
             : 'Очистка ещё не выполнялась.';
+        cleanupStatus.textContent = scheduleText + ' ' + lastText;
     }
     async function cleanupRequest(action, extra = {}) {
         cleanupSelect.disabled = cleanupButton.disabled = true;
@@ -29,7 +33,16 @@ document.addEventListener('DOMContentLoaded', () => {
     cleanupSelect.addEventListener('change', () => {
         cleanupRequest('setCookieCleanup', { hours: Number(cleanupSelect.value) });
     });
-    cleanupButton.addEventListener('click', () => cleanupRequest('clearMeshCookies'));
+    cleanupButton.addEventListener('click', () => {
+        if (confirm('Очистить куки МЭШ сейчас, даже если журнал открыт? Может понадобиться повторный вход.')) {
+            cleanupRequest('clearMeshCookies');
+        }
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.meshCookieCleanup?.newValue) {
+            renderCleanup(changes.meshCookieCleanup.newValue);
+        }
+    });
 
     // Проверка обновлений (с возможностью скрытия)
     fetch('https://raw.githubusercontent.com/dan9zpam/speedmesh-pro/main/manifest.json', { cache: 'no-store' })

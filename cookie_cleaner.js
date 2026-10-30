@@ -16,7 +16,8 @@ async function getSettings() {
     return {
         hours: ALLOWED_HOURS.includes(stored?.hours) ? stored.hours : 24,
         nextAt: stored?.nextAt || null,
-        last: stored?.last || null
+        last: stored?.last || null,
+        deferred: stored?.deferred === true
     };
 }
 
@@ -34,9 +35,10 @@ async function schedule(settings) {
         await saveSettings(settings);
     }
     const alarm = await chrome.alarms.get(CLEANUP_ALARM);
-    if (!alarm || alarm.scheduledTime !== settings.nextAt) {
+    if (!alarm || alarm.scheduledTime <= Date.now() ||
+        (!settings.deferred && alarm.scheduledTime !== settings.nextAt)) {
         await chrome.alarms.create(CLEANUP_ALARM, {
-            when: Math.max(Date.now() + 1000, settings.nextAt)
+            when: Math.max(Date.now() + 60000, settings.nextAt)
         });
     }
 }
@@ -74,6 +76,7 @@ async function clearCookies(settings) {
             }
         }
     }
+    settings.deferred = false;
     settings.last = { at: Date.now(), removed, failed };
     settings.nextAt = settings.hours ? Date.now() + settings.hours * 3600000 : null;
     await saveSettings(settings);
@@ -81,12 +84,48 @@ async function clearCookies(settings) {
     return settings;
 }
 
+function isMeshUrl(value) {
+    try {
+        const url = new URL(value);
+        return ['http:', 'https:'].includes(url.protocol) && MESH_DOMAINS.some(domain =>
+            url.hostname === domain || url.hostname.endsWith('.' + domain));
+    } catch {
+        return false;
+    }
+}
+
+async function runScheduledCleanup() {
+    const settings = await getSettings();
+    if (!settings.hours || !settings.nextAt || settings.nextAt > Date.now()) return;
+    // Query all windows, including inactive and discarded tabs and pending navigation.
+    let tabs;
+    try {
+        tabs = await chrome.tabs.query({});
+    } catch (error) {
+        // Keep a retry scheduled if tab inspection temporarily fails.
+        await schedule(settings);
+        throw error;
+    }
+    if (tabs.some(tab => isMeshUrl(tab.url) || isMeshUrl(tab.pendingUrl))) {
+        settings.deferred = true;
+        await saveSettings(settings);
+        await schedule(settings);
+        return;
+    }
+    await clearCookies(settings);
+}
+
+function checkScheduledCleanup() {
+    serial(runScheduledCleanup)
+        .catch(error => console.error('MESH cookie cleanup failed:', error));
+}
+
 chrome.alarms.onAlarm.addListener(alarm => {
-    if (alarm.name !== CLEANUP_ALARM) return;
-    serial(async () => {
-        const settings = await getSettings();
-        if (settings.hours) await clearCookies(settings);
-    }).catch(error => console.error('MESH cookie cleanup failed:', error));
+    if (alarm.name === CLEANUP_ALARM) checkScheduledCleanup();
+});
+chrome.tabs.onRemoved.addListener(checkScheduledCleanup);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.url || changeInfo.status === 'complete') checkScheduledCleanup();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -96,6 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let settings = await getSettings();
         if (message.action === 'setCookieCleanup') {
             if (!ALLOWED_HOURS.includes(message.hours)) throw new Error('Недопустимый интервал');
+            settings.deferred = false;
             settings.hours = message.hours;
             settings.nextAt = settings.hours ? Date.now() + settings.hours * 3600000 : null;
             await saveSettings(settings);
