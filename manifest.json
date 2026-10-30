@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "speedmesh",
-  "version": "3.0",
+  "version": "3.1",
   "description": "Многофункциональный помощник для учителей в МЭШ: ускорение работы, калькулятор оценок, умный прицел журнала, таймер и генератор КТП.",
   "icons": {
     "16": "icons/icon16.png",
@@ -11,7 +11,9 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "cookies",
+    "alarms"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -100,5 +102,12 @@
         "*://*.dnevnik.mos.ru/*"
       ]
     }
-  ]
+  ],
+  "host_permissions": [
+    "*://*.school.mos.ru/*",
+    "*://*.dnevnik.mos.ru/*"
+  ],
+  "background": {
+    "service_worker": "cookie_cleaner.js"
+  }
 }

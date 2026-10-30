@@ -168,6 +168,22 @@
  </div>
 
  <div class="section-title">Системные утилиты</div>
+ <div class="card" style="--accent: #14b8a6;">
+ <label class="card-title" for="cookieCleanupHours">Очистка куки МЭШ</label>
+ <div class="input-group">
+ <select id="cookieCleanupHours" class="premium-input" disabled>
+ <option value="0">Выключена</option>
+ <option value="1">Каждый час</option>
+ <option value="6">Каждые 6 часов</option>
+ <option value="12">Каждые 12 часов</option>
+ <option value="24" selected>Раз в сутки</option>
+ <option value="168">Раз в неделю</option>
+ </select>
+ <div style="font-size: 11px; color: var(--text-muted);">Удаляет куки school.mos.ru и dnevnik.mos.ru, включая их поддомены. После очистки может понадобиться повторный вход в МЭШ.</div>
+ <button id="clearMeshCookies" class="top-btn" disabled>Очистить сейчас</button>
+ <div id="cookieCleanupStatus" role="status" style="font-size: 11px; color: var(--text-muted);"></div>
+ </div>
+ </div>
  <div class="card" style="--accent: #3b82f6;">
  <div class="card-header">
  <div class="card-title"> Машина Времени (Смена даты)</div>

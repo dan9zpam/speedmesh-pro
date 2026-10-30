@@ -3,6 +3,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const badge = document.querySelector('.version-badge');
     if (badge) badge.textContent = 'v' + chrome.runtime.getManifest().version;
 
+    const cleanupSelect = document.getElementById('cookieCleanupHours');
+    const cleanupButton = document.getElementById('clearMeshCookies');
+    const cleanupStatus = document.getElementById('cookieCleanupStatus');
+    function renderCleanup(data) {
+        cleanupSelect.value = String(data.hours);
+        const last = data.last;
+        cleanupStatus.textContent = last
+            ? `Последняя очистка: ${new Date(last.at).toLocaleString('ru-RU')}. Удалено: ${last.removed}. Ошибок: ${last.failed}.`
+            : 'Очистка ещё не выполнялась.';
+    }
+    async function cleanupRequest(action, extra = {}) {
+        cleanupSelect.disabled = cleanupButton.disabled = true;
+        try {
+            const result = await chrome.runtime.sendMessage({ action, ...extra });
+            if (!result?.ok) throw new Error(result?.error || 'Нет ответа от расширения');
+            renderCleanup(result);
+        } catch (error) {
+            cleanupStatus.textContent = 'Ошибка: ' + error.message;
+        } finally {
+            cleanupSelect.disabled = cleanupButton.disabled = false;
+        }
+    }
+    cleanupRequest('getCookieCleanup');
+    cleanupSelect.addEventListener('change', () => {
+        cleanupRequest('setCookieCleanup', { hours: Number(cleanupSelect.value) });
+    });
+    cleanupButton.addEventListener('click', () => cleanupRequest('clearMeshCookies'));
+
     // Проверка обновлений (с возможностью скрытия)
     fetch('https://raw.githubusercontent.com/dan9zpam/speedmesh-pro/main/manifest.json', { cache: 'no-store' })
         .then(res => res.json())
