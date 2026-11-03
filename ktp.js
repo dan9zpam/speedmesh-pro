@@ -22,7 +22,7 @@
         if (!document.body) return;
         const visible = ktpEnabled && location.pathname.includes('/planning');
         const panel = document.getElementById('mesh-ktp-panel');
-        if (panel) panel.style.setProperty('display', visible ? 'flex' : 'none', 'important');
+        if (panel) panel.style.setProperty('display', visible && (!isKtpRunning || !window.MeshTasks) ? 'flex' : 'none', 'important');
         if (!visible || isKtpRunning) return;
         if (!panel) { panelSignature = null; drawKtpPanel(); }
         updatePanelUI();
@@ -33,6 +33,7 @@
         panel.id = 'mesh-ktp-panel';
         panel.style.cssText = 'position:fixed; bottom:30px; left:30px; background:#1e272e; color:white; padding:15px 25px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.8); z-index:9999999; display:flex; flex-direction:column; gap:10px; font-family:sans-serif; border:2px solid #3498db; width:300px;';
         document.body.appendChild(panel);
+        window.MeshTasks?.attachPanel(panel);
     }
 
     function updatePanelUI() {
@@ -139,6 +140,7 @@
     async function runApiProcess(ids, details) {
         if (isKtpRunning) return;
         isKtpRunning = true;
+        const task = window.MeshTasks?.start({ title: 'Достроение и пересчёт КТП', total: ids.length, cancellable: true });
         try {
         const panel = document.getElementById('mesh-ktp-panel');
         let success = 0; let fail = 0;
@@ -170,7 +172,9 @@
         const pageSize = Number(pageSizeText.match(/\d+/)?.[0]) || rowsByKey.size || ids.length;
 
         for (let i = 0; i < orderedIds.length; i++) {
+            if (task?.cancelled) break;
             const planId = orderedIds[i];
+            task?.update({ current: i, message: `КТП ${i + 1} из ${ids.length}: достроение` });
             
             let row = rowsByKey.get(String(planId));
             let listNumber = null;
@@ -199,6 +203,7 @@
             await sleep(600);
 
             panel.innerHTML = `<div style="text-align:center; font-size:14px;">КТП <b>${i+1} из ${ids.length}</b><br><span style="color:#3498db;">⏳ Пересчет...</span></div>`;
+            task?.update({ message: `КТП ${i + 1} из ${ids.length}: пересчёт` });
             let r2 = await apiRequest(planId, 'recalc');
 
             let logMsg = `=======================================\n${planNumber}\n`;
@@ -229,6 +234,7 @@
             }
             
             processLogs.push(logMsg);
+            task?.update({ current: i + 1, message: `Успешно: ${success}. Ошибок: ${fail}.` });
             await sleep(500); 
         }
 
@@ -259,7 +265,7 @@
         panel.querySelector('#ktp-btn-reload').onclick = () => window.location.reload();
         
         // Логика скачивания файла .txt
-        panel.querySelector('#ktp-btn-log').onclick = () => {
+        const downloadLog = () => {
             const header = `Лог обработки КТП МЭШ (Сгенерировано: ${new Date().toLocaleString()})\nУспешно: ${success} | Ошибок: ${fail}\n\n`;
             const blob = new Blob([header + processLogs.join('\n')], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
@@ -271,12 +277,17 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         };
+        panel.querySelector('#ktp-btn-log').onclick = downloadLog;
+        task?.action('Скачать лог', downloadLog);
+        task?.finish(fail > 0 ? 'error' : task?.cancelled ? 'cancelled' : 'done', `Успешно: ${success}. Ошибок: ${fail}.`);
         } catch (error) {
+            task?.finish('error', 'Обработка прервана: ' + error.message);
             const panel = document.getElementById('mesh-ktp-panel');
             if (panel) panel.textContent = 'Обработка КТП прервана: ' + error.message;
             console.error('MESH KTP:', error);
         } finally {
             isKtpRunning = false;
+            if (task) panelSignature = null;
         }
     }
 })();

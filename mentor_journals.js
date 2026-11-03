@@ -154,11 +154,12 @@
     async function triggerSummaryFromAnywhere(triggerBtn = null) {
         if (summaryRunning) return;
         summaryRunning = true;
+        const task = window.MeshTasks?.start({ title: 'Сводная ведомость', message: 'Поиск журналов группы', cancellable: true });
         try {
         if (triggerBtn) {
             triggerBtn.innerText = '⏳ Подготовка...';
             triggerBtn.style.pointerEvents = 'none';
-        } else {
+        } else if (!task) {
             showMeshToast('📊 Загрузка данных для сводной ведомости...');
         }
 
@@ -170,12 +171,14 @@
                 triggerBtn.innerText = '📊 Сводная ведомость группы';
                 triggerBtn.style.pointerEvents = 'auto';
             }
+            task?.finish('error', 'Не найдены журналы группы. Откройте раздел журналов куратора.');
             showMeshToast('⚠️ Не удалось найти учебные группы. Откройте вкладку "Журналы групп" или расписание.', 'error');
             return;
         }
 
-        await buildAndShowSummarySheet(groups, triggerBtn, authCtx);
+        await buildAndShowSummarySheet(groups, triggerBtn, authCtx, task);
         } catch (error) {
+            task?.finish(task?.cancelled ? 'cancelled' : 'error', error.message);
             console.error('MESH summary:', error);
             showMeshToast('Не удалось сформировать ведомость: ' + error.message, 'error');
         } finally {
@@ -540,7 +543,7 @@
         return students;
     }
 
-    async function buildAndShowSummarySheet(groups, triggerBtn, authCtx) {
+    async function buildAndShowSummarySheet(groups, triggerBtn, authCtx, task) {
         if (!groups || groups.length === 0) {
             showMeshToast("Список предметов пуст", "error");
             return;
@@ -557,13 +560,22 @@
         window._meshDownloadedBlobs = new Map();
         const failedJournals = [];
 
+        task?.update({ total: groups.length * 2 });
+        const stopIfCancelled = () => {
+            if (!task?.cancelled) return false;
+            task.finish('cancelled', 'Формирование ведомости остановлено.');
+            if (triggerBtn) { triggerBtn.innerText = origBtnText; triggerBtn.style.pointerEvents = 'auto'; }
+            return true;
+        };
         // 1. Загрузка недостающих файлов
         for (let i = 0; i < groups.length; i++) {
+            if (stopIfCancelled()) return;
+            task?.update({ current: i, message: `Загрузка журнала ${i + 1} из ${groups.length}` });
             const g = groups[i];
             if (!window._meshDownloadedBlobs.has(g.id)) {
                 const loadMsg = `⏳ Загрузка ${i + 1}/${groups.length}`;
                 if (triggerBtn) triggerBtn.innerText = loadMsg;
-                else showMeshToast(loadMsg);
+                else if (!task) showMeshToast(loadMsg);
 
                 try {
                     const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
@@ -585,13 +597,16 @@
         }
 
         if (triggerBtn) triggerBtn.innerText = '⏳ Парсинг оценок...';
-        else showMeshToast('⏳ Парсинг оценок...');
+        else if (!task) showMeshToast('⏳ Парсинг оценок...');
 
         // 2. Парсинг каждого журнала и построение матрицы
         const subjectsList = [];
         const studentMap = new Map();
 
+        let parsedCount = 0;
         for (let g of groups) {
+            if (stopIfCancelled()) return;
+            task?.update({ current: groups.length + parsedCount++, message: 'Чтение журнала: ' + g.name });
             const item = window._meshDownloadedBlobs.get(g.id);
             if (!item || !item.blob) continue;
 
@@ -619,11 +634,13 @@
 
         if (failedJournals.length) {
             console.error('Не удалось сформировать полную ведомость:', failedJournals);
+            task?.finish('error', failedJournals.join('; '));
             showMeshToast('Ведомость не сформирована. Ошибки журналов: ' + failedJournals.join('; '), 'error');
             return;
         }
 
         if (studentMap.size === 0) {
+            task?.finish('error', 'В журналах не найдены данные обучающихся.');
             showMeshToast("Не удалось извлечь данные обучающихся из выгруженных журналов.", "error");
             return;
         }
@@ -665,6 +682,9 @@
             };
         });
 
+        if (stopIfCancelled()) return;
+        task?.finish('done', `Студентов: ${processedStudents.length}. Дисциплин: ${subjectsList.length}.`);
+        task?.action('Открыть ведомость', () => renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr));
         // 4. Отрисовка модального окна сводной ведомости
         renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr);
     }
@@ -777,7 +797,8 @@
 
                     <div style="display:flex; align-items:center; gap:8px;">
                         <button id="mesh-summary-copy-debtors" style="background:#475569; color:#fff; border:none; padding:7px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">📋 Список долгов</button>
-                        <button id="mesh-summary-export-csv" style="background:#10b981; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">💾 Скачать ведомость (Excel)</button>
+                        <button id="mesh-summary-export-xlsx" style="background:#10b981; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Скачать Excel (.xlsx)</button>
+                        <button id="mesh-summary-export-csv" style="background:#10b981; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">CSV</button>
                     </div>
                 </div>
 
@@ -834,6 +855,25 @@
         const closeModal = () => modal.remove();
         modal.querySelector('#mesh-close-summary-btn').onclick = closeModal;
         modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+        modal.querySelector('#mesh-summary-export-xlsx').onclick = async () => {
+            const button = modal.querySelector('#mesh-summary-export-xlsx');
+            button.disabled = true;
+            const exportTask = window.MeshTasks?.start({ title: 'Экспорт в Excel', message: 'Подготовка файла .xlsx' });
+            try {
+                const bytes = await window.MeshExcel.createSummaryWorkbook({ courseName, yearStart, yearEnd, subjectsList, students, todayRuStr });
+                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `Сводная_ведомость_${courseName}_на_${todayStr}.xlsx`;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                exportTask?.finish('done', 'Файл .xlsx передан браузеру для скачивания.');
+            } catch (error) {
+                exportTask?.finish('error', error.message);
+                showMeshToast('Не удалось создать Excel: ' + error.message, 'error');
+            } finally { button.disabled = false; }
+        };
 
         modal.querySelector('#mesh-summary-export-csv').onclick = () => {
             let csv = '\uFEFF';

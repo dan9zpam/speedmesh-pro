@@ -482,7 +482,10 @@ function bindReloadButtons(panel) {
 
 function drawRobotPanel(count) {
     let p = document.getElementById('mesh-robot-panel');
-    if (!p) { p = document.createElement('div'); p.id = 'mesh-robot-panel'; document.body.appendChild(p); }
+    if (!p) { p = document.createElement('div'); p.id = 'mesh-robot-panel'; document.body.appendChild(p); window.MeshTasks?.attachPanel(p); }
+    const previousCount = Number(p.dataset.selectionCount) || 0;
+    p.dataset.selectionCount = count;
+    if (count > 0 && previousCount === 0) window.MeshTasks?.open();
     p.style.display = 'flex';
 
     const reloadBtnHtml = `
@@ -577,6 +580,8 @@ async function startSmartMatrixAPI(isAutoResume = false) {
 
     isRobotActive = true; 
     meshAbortProcess = false;
+    const task = window.MeshTasks?.start({ title: 'Выставление оценок', total: cells.length, onCancel: () => { meshAbortProcess = true; } });
+    if (task) document.getElementById('mesh-robot-panel')?.remove();
     try {
 
     let pendingToSave = cells.map(c => {
@@ -606,7 +611,7 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     if(tk) aupd_token = decodeURIComponent(tk[1]); if(pr) profile_id = decodeURIComponent(pr[1]);
     try { meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}"); let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization']; if(auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', ''); let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id']; if(pId) profile_id = pId; } catch(e) {}
 
-    if (!aupd_token || !profile_id) { sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES'); alert("❌ Ошибка авторизации. Перехват токена не удался. Обновите страницу (F5)."); isRobotActive = false; return; }
+    if (!aupd_token || !profile_id) { task?.finish('error', 'Нет авторизации. Обновите страницу и войдите в МЭШ.'); sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES'); alert("❌ Ошибка авторизации. Перехват токена не удался. Обновите страницу (F5)."); isRobotActive = false; return; }
 
     let stolenWeight2CfId = null; let stolenWeight1CfId = null; let allPageCfIds = new Set();
     document.querySelectorAll('[data-test-component*="markCell"]').forEach(cell => {
@@ -627,6 +632,7 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     for (let i = 0; i < cells.length; i++) {
         if (meshAbortProcess || location.href !== operationRoute) break;
 
+        task?.update({ current: i, message: `Отправка оценки ${i + 1} из ${cells.length}` });
         const cell = cells[i]; const gradeStr = cell.dataset.robotTargetGrade;
         if(p) { let counter = document.getElementById('mesh-robot-count'); if (counter) counter.innerText = `${i+1} / ${cells.length}`; }
         
@@ -731,13 +737,17 @@ async function startSmartMatrixAPI(isAutoResume = false) {
             }
         } else { err++; (cell.querySelector('div') || cell).innerHTML = `<div class="api-error-badge">❌ Сбой</div>`; }
         cell.removeAttribute('data-robot-target-grade'); if (ph) ph.remove(); 
+        task?.update({ current: i + 1, message: `Выставлено: ${ok}. Ошибок: ${err}.` });
         await sleep(10); // Сверхбыстрая отправка
     }
     
     isRobotActive = false;
     sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
 
-    if (err > 0 && firstFatalErrorLog && ok === 0) {
+    task?.finish(err > 0 ? 'error' : meshAbortProcess || location.href !== operationRoute ? 'cancelled' : 'done',
+        `Выставлено: ${ok}. Ошибок: ${err}.` + (meshAbortProcess ? ' Перед повтором проверьте журнал.' : '') +
+        (firstFatalErrorLog ? ' Ответ: ' + String(firstFatalErrorLog.server_response).slice(0, 400) : ''));
+    if (err > 0 && firstFatalErrorLog && ok === 0 && !task) {
         let logText = JSON.stringify(firstFatalErrorLog, null, 2); console.error("🔥 Ошибка сервера:\n", logText); prompt(`Отправка остановлена. Перед повтором проверьте фактические оценки в журнале. Лог ошибки:\n\n`, logText);
     }
     if (p) {
@@ -749,12 +759,15 @@ async function startSmartMatrixAPI(isAutoResume = false) {
         bindReloadButtons(p);
     }
     } catch (error) {
+        task?.finish('error', 'Отправка прервана. Перед повтором проверьте журнал. ' + error.message);
         console.error('MESH grades:', error);
         const panel = document.getElementById('mesh-robot-panel');
         if (panel) panel.textContent = 'Отправка прервана. Проверьте оценки в журнале перед повтором. ' + error.message;
     } finally {
         isRobotActive = false;
         sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
+        task?.finish('error', 'Отправка прервана. Проверьте журнал.');
+        if (task && location.href === operationRoute) runCoreLogic();
     }
 }
 // === ГЛОБАЛЬНЫЙ ПЕРЕХВАТЧИК КЛИКОВ (EVENT DELEGATION) ===

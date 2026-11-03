@@ -237,3 +237,105 @@ test('summary CSV export preserves names, decimal separators and quoted headers'
     await s.flush();
     assert.equal(revoked, 'blob:https://school.mos.ru/test');
 });
+
+test('task center keeps active tasks during clear, handles stop once and preserves results across routes', t => {
+    const s = setup(t); s.load('task_center.js');
+    let stopped = 0;
+    const task = s.w.MeshTasks.start({ title: '<Оценки>', total: 3, onCancel: () => stopped++ });
+    task.update({ current: 1, message: 'Проверка' });
+    const row = s.w.document.querySelector('.mesh-task-row');
+    assert.equal(row.querySelector('.mesh-task-title').textContent, '<Оценки>');
+    assert.equal(row.querySelector('progress').value, 1);
+    row.querySelector('.mesh-task-stop').click(); row.querySelector('.mesh-task-stop').click();
+    assert.equal(stopped, 1); assert.equal(task.cancelled, true); assert.equal(row.dataset.status, 'stopping');
+    s.w.document.getElementById('mesh-task-clear').click(); assert(row.isConnected);
+    s.w.history.pushState({}, '', '/schedule'); assert(row.isConnected);
+    task.finish('cancelled', 'Отправка остановлена'); task.update({ message: 'Late update' });
+    assert.equal(row.querySelector('.mesh-task-message').textContent, 'Отправка остановлена');
+    s.w.document.getElementById('mesh-task-close').click();
+    assert.equal(s.w.document.getElementById('mesh-task-launcher').getAttribute('aria-expanded'), 'false');
+    s.w.document.getElementById('mesh-task-clear').click(); assert(!row.isConnected);
+});
+
+test('grades report progress in the center and stop after a requested cancellation', async t => {
+    const s = setup(t); s.load('task_center.js'); s.load('content.js'); s.tick(50); gradeCells(s.w, 2);
+    let finishRequest, calls = 0;
+    s.w.fetch = () => { calls++; return new Promise(resolve => { finishRequest = resolve; }); };
+    const pending = s.w.eval('startSmartMatrixAPI(false)');
+    const taskRow = s.w.document.querySelector('.mesh-task-row');
+    taskRow.querySelector('.mesh-task-stop').click();
+    finishRequest({ ok: true, json: async () => ({ id: 1 }) });
+    await s.flush(); await pending;
+    assert.equal(calls, 1); assert.equal(taskRow.dataset.status, 'cancelled');
+    assert(taskRow.textContent.includes('Выставлено: 1'));
+    assert.equal(s.w.document.getElementById('mesh-robot-panel').parentElement.id, 'mesh-task-controls');
+});
+
+test('KTP cancellation completes the current finish/recalc pair, retains logs, and skips the next plan', async t => {
+    const s = setup(t, 'https://school.mos.ru/planning/programs');
+    s.load('task_center.js'); s.w.sessionStorage.setItem('MESH_KTP_IDS', '[7,8]');
+    s.load('ktp.js'); s.tick(500); await s.flush();
+    let finishRequest;
+    s.w.fetch = url => {
+        s.requests.push(url);
+        return url.includes('/finish?') ? new Promise(resolve => { finishRequest = resolve; }) : Promise.resolve({ ok: true, status: 200, text: async () => '{}' });
+    };
+    s.w.document.getElementById('ktp-btn-run').click();
+    const taskRow = s.w.document.querySelector('.mesh-task-row');
+    taskRow.querySelector('.mesh-task-stop').click();
+    s.w.history.pushState({}, '', '/schedule'); s.tick(500);
+    finishRequest({ ok: true, status: 200, text: async () => '{}' }); await s.flush(20);
+    assert.equal(s.requests.length, 2); assert(s.requests[1].includes('/7/recalc?'));
+    assert.equal(taskRow.dataset.status, 'cancelled');
+    assert(taskRow.textContent.includes('Скачать лог'));
+    assert.equal(s.w.getComputedStyle(s.w.document.getElementById('mesh-ktp-panel')).display, 'none');
+});
+
+test('summary cancellation restores the trigger and does not create a partial report', async t => {
+    const s = setup(t); s.load('task_center.js'); const api = summary(s);
+    const task = s.w.MeshTasks.start({ title: 'Ведомость', cancellable: true });
+    const btn = s.w.document.createElement('button'); btn.innerText = 'Ведомость';
+    s.w.document.querySelector('.mesh-task-stop').click();
+    await api.buildAndShowSummarySheet([{ id: 1, name: 'Предмет' }], btn, undefined, task);
+    assert.equal(s.requests.length, 0); assert.equal(btn.style.pointerEvents, 'auto');
+    assert.equal(s.w.document.getElementById('speedmesh-summary-modal'), null);
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'cancelled');
+});
+
+test('Excel download creates a real XLSX and reports completion in the task center', async t => {
+    const s = setup(t); s.load('task_center.js'); const api = summary(s); s.load('excel_export.js');
+    let exported, filename;
+    s.w.URL.createObjectURL = blob => { exported = blob; return 'blob:https://school.mos.ru/xlsx'; };
+    s.w.URL.revokeObjectURL = () => {};
+    s.w.HTMLAnchorElement.prototype.click = function () { filename = this.download; };
+    api.renderSummaryModalUI('ИСП2311', 2026, 2027, ['ОС'], [{ name: 'Иванов Иван', subjects: { ОС: 4.5 }, overallAvg: 4.5, failedCount: 0, status: 'Отличник' }], '03.11.2026', '2026-11-03');
+    const btn = s.w.document.getElementById('mesh-summary-export-xlsx'); btn.click();
+    await s.flush(30);
+    assert.equal(btn.disabled, false);
+    assert.equal(filename, 'Сводная_ведомость_ИСП2311_на_2026-11-03.xlsx');
+    assert.equal(exported.type, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const bytes = await new Promise(resolve => { const reader = new s.w.FileReader(); reader.onload = () => resolve(new Uint8Array(reader.result)); reader.readAsArrayBuffer(exported); });
+    const zip = await JSZip.loadAsync(bytes); assert(zip.file('xl/workbook.xml'));
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'done');
+});
+
+test('journal rescans do not reopen a task center closed by the user', t => {
+    const s = setup(t); s.load('task_center.js'); s.load('content.js');
+    s.w.eval('drawRobotPanel(2)');
+    const drawer = s.w.document.getElementById('mesh-task-drawer');
+    assert.equal(drawer.hidden, false);
+    s.w.document.getElementById('mesh-task-close').click();
+    s.w.eval('drawRobotPanel(2)');
+    assert.equal(drawer.hidden, true);
+});
+
+test('failed Excel creation restores the button and displays an error task', async t => {
+    const s = setup(t); s.load('task_center.js'); const api = summary(s);
+    s.w.MeshExcel = { createSummaryWorkbook: async () => { throw new Error('Тестовая ошибка'); } };
+    api.renderSummaryModalUI('ИСП2311', 2026, 2027, [], [], '03.11.2026', '2026-11-03');
+    const button = s.w.document.getElementById('mesh-summary-export-xlsx'); button.click();
+    await s.flush();
+    assert.equal(button.disabled, false);
+    const row = s.w.document.querySelector('.mesh-task-row');
+    assert.equal(row.dataset.status, 'error'); assert(row.textContent.includes('Тестовая ошибка'));
+});

@@ -25,7 +25,7 @@ const send = (method, params = {}, sessionId) => new Promise((resolve, reject) =
     const id = ++nextId; pending.set(id, { resolve, reject });
     chrome.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
 });
-const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{getURL:file=>'/'+file,getManifest:()=>({version:'3.3'}),onMessage:{addListener:()=>{}},sendMessage:async()=>({ok:true,hours:24,nextAt:Date.now()+86400000})},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
+const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{getURL:file=>'/'+file,getManifest:()=>({version:'3.4'}),onMessage:{addListener:()=>{}},sendMessage:async()=>({ok:true,hours:24,nextAt:Date.now()+86400000})},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
 const manifest = JSON.parse(fs.readFileSync('manifest.json'));
 const scripts = manifest.content_scripts.flatMap(group => group.js);
 const server = http.createServer((req, res) => {
@@ -56,18 +56,57 @@ const server = http.createServer((req, res) => {
         };
         const bounds = await evaluate(`(()=>{const card=document.getElementById('mesh-timer-card');const r=card.getBoundingClientRect();return {right:innerWidth-r.right,bottom:innerHeight-r.bottom,text:card.innerText}})()`);
         assert(Math.abs(bounds.right - 20) < 1); assert(Math.abs(bounds.bottom - 20) < 1);
-        await evaluate('drawRobotPanel(0)');
+        await evaluate('drawRobotPanel(0); window.MeshTasks.open()');
+        assert.equal(await evaluate(`document.getElementById('mesh-robot-panel').parentElement.id`), 'mesh-task-controls');
+        await evaluate(`window.browserTask = window.MeshTasks.start({title:'Обновление КТП',total:12,cancellable:true}); browserTask.update({current:7,message:'КТП 8 из 12: пересчёт'});`);
+        assert.equal(await evaluate(`document.querySelector('.mesh-task-row progress').value`), 7);
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-journal.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
         await evaluate(`history.pushState({},'', '/schedule')`);
         await new Promise(resolve => setTimeout(resolve, 650));
         assert.equal(await evaluate(`document.getElementById('mesh-robot-panel')===null`), true);
+        assert.equal(await evaluate(`document.querySelector('.mesh-task-row').dataset.status`), 'running');
+        await evaluate(`document.querySelector('.mesh-task-stop').click()`);
+        assert.equal(await evaluate(`browserTask.cancelled`), true);
+        await evaluate(`browserTask.finish('cancelled','Обработка остановлена после текущего плана')`);
+        assert.equal(await evaluate(`document.querySelector('.mesh-task-row').dataset.status`), 'cancelled');
+        await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: profile }, undefined);
+        await evaluate(`(async()=>{
+            const zip=new JSZip();
+            zip.file('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Иванов Иван</t></is></c><c r="B1"><v>5</v></c><c r="C1"><v>4</v></c></row></sheetData></worksheet>');
+            const bytes=await zip.generateAsync({type:'uint8array'});
+            sessionStorage.setItem('MESH_MENTOR_GROUPS',JSON.stringify([{id:1,name:'ИСП2311 ОС'}]));
+            window.fetch=async()=>new Response(bytes);
+            window.dispatchEvent(new Event('speedmesh:buildSummarySheet'));
+        })()`);
+        await evaluate(`new Promise((resolve,reject)=>{
+            const end=Date.now()+5000;
+            const check=()=>document.getElementById('mesh-summary-export-xlsx')?resolve(true):Date.now()>end?reject(new Error('Summary timeout')):setTimeout(check,50);check();
+        })`);
+        const modalOnTop = await evaluate(`(()=>{const r=document.querySelector('#mesh-summary-export-xlsx').getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.id;})()`);
+        assert.equal(modalOnTop, 'mesh-summary-export-xlsx');
+        fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-summary.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
+        await evaluate(`document.querySelector('#mesh-summary-export-xlsx').click()`);
+        await evaluate(`new Promise((resolve,reject)=>{
+            const end=Date.now()+5000;
+            const check=()=>document.querySelector('.mesh-task-row').dataset.status==='done'?resolve(true):Date.now()>end?reject(new Error('Excel timeout')):setTimeout(check,50);check();
+        })`);
+        let workbookPath;
+        for (let attempt=0;attempt<30;attempt++) {
+            workbookPath=fs.readdirSync(profile).find(file=>file.endsWith('.xlsx'));
+            if(workbookPath) break;
+            await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        assert(workbookPath,'Excel download must complete');
+        const workbook=fs.readFileSync(path.join(profile,workbookPath));
+        assert.equal(workbook[0],0x50);assert.equal(workbook[1],0x4b);
+        fs.writeFileSync(path.join(os.tmpdir(),'speedmesh-summary-check.xlsx'),workbook);
         assert.deepEqual(errors, []);
         await send('Page.navigate', { url: base + '/popup.html' }, sessionId);
         await new Promise(resolve => setTimeout(resolve, 800));
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-popup.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
-        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.3');
+        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.4');
         assert.deepEqual(errors, []);
-        console.log(JSON.stringify({ browser: 'Google Chrome headless', allContentScripts: scripts.length, timer: bounds, routeCleanup: true, popup: true, errors, screenshots: [path.join(os.tmpdir(), 'speedmesh-journal.png'), path.join(os.tmpdir(), 'speedmesh-popup.png')] }, null, 2));
+        console.log(JSON.stringify({ browser: 'Google Chrome headless', allContentScripts: scripts.length, timer: bounds, routeCleanup: true, taskCenter: true, excelWorkbook: true, popup: true, errors, screenshots: [path.join(os.tmpdir(), 'speedmesh-journal.png'), path.join(os.tmpdir(), 'speedmesh-popup.png')] }, null, 2));
     } finally {
         await send('Browser.close').catch(() => {});
         server.close();
