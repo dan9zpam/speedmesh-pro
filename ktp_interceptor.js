@@ -17,15 +17,15 @@
 
     function scanKtp(data) {
         try {
-            let list = Array.isArray(data) ? data : (data.items || data.data || []);
-            let found = false;
+            let list = Array.isArray(data) ? data : (data.items || data.data);
+            if (!Array.isArray(list)) return;
+            ktpIds = new Set();
             list.forEach(item => {
                 if (item && item.id) {
                     ktpIds.add(item.id);
-                    found = true;
                 }
             });
-            if (found) saveData();
+            saveData();
         } catch(e) {}
     }
 

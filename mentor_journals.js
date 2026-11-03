@@ -150,7 +150,11 @@
         triggerSummaryFromAnywhere();
     });
 
+    let summaryRunning = false;
     async function triggerSummaryFromAnywhere(triggerBtn = null) {
+        if (summaryRunning) return;
+        summaryRunning = true;
+        try {
         if (triggerBtn) {
             triggerBtn.innerText = '⏳ Подготовка...';
             triggerBtn.style.pointerEvents = 'none';
@@ -171,6 +175,16 @@
         }
 
         await buildAndShowSummarySheet(groups, triggerBtn, authCtx);
+        } catch (error) {
+            console.error('MESH summary:', error);
+            showMeshToast('Не удалось сформировать ведомость: ' + error.message, 'error');
+        } finally {
+            summaryRunning = false;
+            if (triggerBtn) {
+                triggerBtn.innerText = '📊 Сводная ведомость группы';
+                triggerBtn.style.pointerEvents = 'auto';
+            }
+        }
     }
 
     // Регулярная проверка и отрисовка панели на вкладках журналов куратора/групп
@@ -236,10 +250,10 @@
                     btn.innerText = `⏳ Скачиваем ${i+1}/${groups.length}`;
                     try {
                         const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
-                        let res = await fetch(url, { headers: reqHeaders });
+                        let res = await fetch(url, { headers: reqHeaders, signal: AbortSignal.timeout(30000) });
                         if (!res.ok && (res.status === 401 || res.status === 403)) {
                             let altHeaders = { ...reqHeaders, "x-mes-subsystem": "journalw" };
-                            res = await fetch(url, { headers: altHeaders });
+                            res = await fetch(url, { headers: altHeaders, signal: AbortSignal.timeout(30000) });
                         }
                         if (res.ok) {
                             const blob = await res.blob();
@@ -364,6 +378,12 @@
 
     // --- ПАРСИНГ ЖУРНАЛОВ И ПОСТРОЕНИЕ СВОДНОЙ ВЕДОМОСТИ ---
 
+    function escapeSummaryHtml(value) {
+        return String(value).replace(/[&<>"']/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[char]));
+    }
+
     function isStudentName(str) {
         if (!str || str.length < 4 || str.length > 80) return false;
         const words = str.split(/\s+/).filter(Boolean);
@@ -377,7 +397,7 @@
         const lower = str.toLowerCase();
         if (invalidKeywords.some(k => lower.includes(k))) return false;
         // Поддержка любого регистра (Иванов Иван, ИВАНОВ ИВАН, Иванов И.В.)
-        return words.every(w => /^[А-ЯЁа-яё\-]+(\.)?$/.test(w) && w.replace(/[^А-ЯЁа-яё]/g, '').length >= 1);
+        return words.every(w => /^(?:[А-ЯЁа-яё\-]+|(?:[А-ЯЁа-яё]\.){1,3})$/.test(w) && w.replace(/[^А-ЯЁа-яё]/g, '').length >= 1);
     }
 
     function colToIndex(col) {
@@ -410,13 +430,20 @@
         }
 
         const sheetFile = zipInst.file('xl/worksheets/sheet1.xml');
-        if (!sheetFile) return [];
+        if (!sheetFile) throw new Error("В XLSX отсутствует лист журнала");
         const sheetText = await sheetFile.async('text');
         const sheetDoc = new DOMParser().parseFromString(sheetText, 'application/xml');
         const rowNodes = sheetDoc.getElementsByTagName('row');
 
         // Поиск границы между сеткой оценок и тематическим планом ("Дата", "Тема", "Домашнее задание")
-        let metadataCutoffIndex = 999;
+        let metadataCutoffIndex = Infinity;
+        const summaryColumns = new Set();
+        function readCell(cell) {
+            const type = cell.getAttribute('t');
+            if (type === 'inlineStr') return cell.getElementsByTagName('is')[0]?.textContent.trim() || '';
+            const value = cell.getElementsByTagName('v')[0]?.textContent.trim() || '';
+            return type === 's' ? sharedStrings[Number(value)] || '' : value;
+        }
         const metaKeywords = ['дата', 'тема', 'домашнее задание', 'тема урока', 'дз'];
 
         for (let r = 0; r < Math.min(rowNodes.length, 5); r++) {
@@ -424,14 +451,11 @@
             for (let c = 0; c < cellNodes.length; c++) {
                 const cell = cellNodes[c];
                 const ref = cell.getAttribute('r') || '';
-                const type = cell.getAttribute('t') || '';
-                const vEl = cell.getElementsByTagName('v')[0];
-                let val = vEl ? vEl.textContent.trim() : '';
-                if (type === 's') {
-                    const idx = parseInt(val, 10);
-                    val = sharedStrings[idx] !== undefined ? sharedStrings[idx].trim() : '';
+                const low = readCell(cell).trim().toLowerCase();
+                const headerColumn = ref.match(/^([A-Z]+)/)?.[1];
+                if (headerColumn && /средн|итог|аттест|экзамен|зач[её]т|количество|пропуск/.test(low)) {
+                    summaryColumns.add(colToIndex(headerColumn));
                 }
-                const low = val.toLowerCase();
                 if (metaKeywords.some(k => low === k || low.startsWith(k))) {
                     const colMatch = ref.match(/^([A-Z]+)/);
                     if (colMatch) {
@@ -455,22 +479,13 @@
             for (let c = 0; c < cellNodes.length; c++) {
                 const cell = cellNodes[c];
                 const ref = cell.getAttribute('r') || '';
-                const type = cell.getAttribute('t') || '';
-                const vEl = cell.getElementsByTagName('v')[0];
-                let val = vEl ? vEl.textContent.trim() : '';
-                if (type === 's') {
-                    const idx = parseInt(val, 10);
-                    val = sharedStrings[idx] !== undefined ? sharedStrings[idx].trim() : '';
-                } else if (type === 'inlineStr') {
-                    const isEl = cell.getElementsByTagName('is')[0];
-                    val = isEl ? isEl.textContent.trim() : '';
-                }
+                const val = readCell(cell);
                 const colMatch = ref.match(/^([A-Z]+)/);
                 const colLetter = colMatch ? colMatch[1] : '';
                 const colIdx = colToIndex(colLetter);
 
                 // Отсекаем колонки календарно-тематического плана (U, V, W и далее)
-                if (colIdx >= metadataCutoffIndex) continue;
+                if (colIdx >= metadataCutoffIndex || summaryColumns.has(colIdx)) continue;
 
                 rowCells.push({ col: colLetter, colIdx, val });
             }
@@ -502,16 +517,12 @@
                 if (str.includes('/')) {
                     const parts = str.split('/');
                     for (let p of parts) {
-                        let num = parseInt(p.trim(), 10);
-                        if (num >= 2 && num <= 5) marks.push(num);
+                        if (/^[2-5]$/.test(p.trim())) marks.push(Number(p.trim()));
                     }
                     continue;
                 }
 
-                let num = parseInt(str, 10);
-                if (!isNaN(num) && num >= 2 && num <= 5) {
-                    marks.push(num);
-                }
+                if (/^[2-5]$/.test(str)) marks.push(Number(str));
             }
 
             // Средний балл считается строго по реальным оценкам за уроки (от 2.00 до 5.00)
@@ -542,7 +553,9 @@
         }
 
         const { reqHeaders, yearStart, yearEnd, startAt, stopAt, todayRuStr, todayStr } = authCtx || getMentorAuthContext();
-        window._meshDownloadedBlobs = window._meshDownloadedBlobs || new Map();
+        // Fetch a fresh snapshot: cached exports may predate changed marks or dates.
+        window._meshDownloadedBlobs = new Map();
+        const failedJournals = [];
 
         // 1. Загрузка недостающих файлов
         for (let i = 0; i < groups.length; i++) {
@@ -554,17 +567,19 @@
 
                 try {
                     const url = `https://school.mos.ru/api/profeducation/core/teacher/v1/journals/export?group_ids=${g.id}&start_at=${startAt}&stop_at=${stopAt}`;
-                    let res = await fetch(url, { headers: reqHeaders });
+                    let res = await fetch(url, { headers: reqHeaders, signal: AbortSignal.timeout(30000) });
                     if (!res.ok && (res.status === 401 || res.status === 403)) {
                         let altHeaders = { ...reqHeaders, "x-mes-subsystem": "journalw" };
-                        res = await fetch(url, { headers: altHeaders });
+                        res = await fetch(url, { headers: altHeaders, signal: AbortSignal.timeout(30000) });
                     }
                     if (res.ok) {
                         const blob = await res.blob();
                         const safeName = g.name.replace(/[\/\\:\*\?"<>\|]/g, '').trim();
                         window._meshDownloadedBlobs.set(g.id, { name: safeName, blob });
+                    } else {
+                        failedJournals.push(`${g.name}: HTTP ${res.status}`);
                     }
-                } catch(e) {}
+                } catch(e) { failedJournals.push(`${g.name}: ${e.message}`); }
                 await new Promise(r => setTimeout(r, 150));
             }
         }
@@ -581,10 +596,10 @@
             if (!item || !item.blob) continue;
 
             const safeName = item.name;
-            subjectsList.push(safeName);
-
             try {
                 const parsedStudents = await parseJournalXlsx(item.blob);
+                if (!parsedStudents.length) throw new Error('Не найдены строки обучающихся');
+                subjectsList.push(safeName);
                 for (let ps of parsedStudents) {
                     if (!studentMap.has(ps.name)) {
                         studentMap.set(ps.name, {});
@@ -592,6 +607,7 @@
                     studentMap.get(ps.name)[safeName] = ps.avg;
                 }
             } catch(e) {
+                failedJournals.push(`${safeName}: ${e.message}`);
                 console.error("Ошибка парсинга журнала:", safeName, e);
             }
         }
@@ -599,6 +615,12 @@
         if (triggerBtn) {
             triggerBtn.innerText = origBtnText;
             triggerBtn.style.pointerEvents = 'auto';
+        }
+
+        if (failedJournals.length) {
+            console.error('Не удалось сформировать полную ведомость:', failedJournals);
+            showMeshToast('Ведомость не сформирована. Ошибки журналов: ' + failedJournals.join('; '), 'error');
+            return;
         }
 
         if (studentMap.size === 0) {
@@ -629,10 +651,10 @@
                 ? parseFloat((validAvgs.reduce((a, b) => a + b, 0) / validAvgs.length).toFixed(2))
                 : null;
 
-            let status = "Аттестован";
+            let status = validAvgs.length < subjectsList.length ? "Нет данных" : "Аттестован";
             if (failedCount > 0) status = "Задолженность";
-            else if (overallAvg !== null && overallAvg >= 4.5) status = "Отличник";
-            else if (overallAvg !== null && overallAvg >= 3.5) status = "Хорошист";
+            else if (validAvgs.length === subjectsList.length && overallAvg !== null && overallAvg >= 4.5) status = "Отличник";
+            else if (validAvgs.length === subjectsList.length && overallAvg !== null && overallAvg >= 3.5) status = "Хорошист";
 
             return {
                 name,
@@ -686,7 +708,7 @@
                 return `
                     <tr style="border-bottom:1px solid #1e293b; transition:background 0.15s;" onmouseover="this.style.background='rgba(51,65,85,0.3)'" onmouseout="this.style.background='transparent'">
                         <td style="padding:8px 10px; text-align:center; color:#64748b; font-size:11px;">${idx + 1}</td>
-                        <td style="padding:8px 12px; font-weight:600; color:#f1f5f9; font-size:12px; white-space:nowrap; position:sticky; left:0; background:#1e293b; z-index:3; border-right:1px solid #334155;">${st.name}</td>
+                        <td style="padding:8px 12px; font-weight:600; color:#f1f5f9; font-size:12px; white-space:nowrap; position:sticky; left:0; background:#1e293b; z-index:3; border-right:1px solid #334155;">${escapeSummaryHtml(st.name)}</td>
                         ${subjectsList.map(subj => {
                             const val = st.subjects[subj];
                             let cellText = '—';
@@ -699,7 +721,7 @@
                                 else if (val >= 3.0) { cellColor = '#fbbf24'; }
                                 else { cellColor = '#ef4444'; cellBg = 'rgba(239,68,68,0.15)'; }
                             }
-                            return `<td style="padding:8px 8px; text-align:center; font-weight:600; font-size:11px; color:${cellColor}; background:${cellBg}; white-space:nowrap;" title="${subj}: ${cellText}">${cellText}</td>`;
+                            return `<td style="padding:8px 8px; text-align:center; font-weight:600; font-size:11px; color:${cellColor}; background:${cellBg}; white-space:nowrap;" title="${escapeSummaryHtml(subj)}: ${cellText}">${cellText}</td>`;
                         }).join('')}
                         <td style="padding:8px 10px; text-align:center; font-weight:700; font-size:12px; color:${st.failedCount > 0 ? '#ef4444' : '#10b981'}; background:${st.failedCount > 0 ? 'rgba(239,68,68,0.1)' : 'transparent'};">${st.failedCount}</td>
                         <td style="padding:8px 10px; text-align:center; font-weight:700; font-size:13px; color:${st.overallAvg >= 4.0 ? '#10b981' : (st.overallAvg >= 3.0 ? '#fbbf24' : '#ef4444')};">${st.overallAvg !== null ? st.overallAvg.toFixed(2) : '—'}</td>
@@ -715,7 +737,7 @@
                     <div style="display:flex; align-items:center; gap:12px;">
                         <span style="font-size:26px;">📊</span>
                         <div>
-                            <div style="font-size:17px; font-weight:700; color:#fff;">Сводная ведомость успеваемости: <span style="color:#60a5fa;">${courseName}</span> <span style="font-size:13px; color:#94a3b8; font-weight:normal;">(на ${todayRuStr})</span></div>
+                            <div style="font-size:17px; font-weight:700; color:#fff;">Сводная ведомость успеваемости: <span style="color:#60a5fa;">${escapeSummaryHtml(courseName)}</span> <span style="font-size:13px; color:#94a3b8; font-weight:normal;">(на ${todayRuStr})</span></div>
                             <div style="font-size:11px; color:#94a3b8; margin-top:2px;">Учебный год ${yearStart}–${yearEnd} · Сформирована: ${todayRuStr} · Дисциплин: ${subjectsList.length} · Студентов: ${totalStudents}</div>
                         </div>
                     </div>
@@ -767,7 +789,7 @@
                                 <th style="padding:10px 12px; color:#94a3b8; font-size:12px; position:sticky; left:0; background:#0f172a; z-index:12; border-right:1px solid #334155; min-width:200px;">Обучающийся</th>
                                 ${subjectsList.map(subj => {
                                     let short = subj.length > 14 ? subj.slice(0, 12) + '...' : subj;
-                                    return `<th style="padding:10px 8px; text-align:center; color:#cbd5e1; font-size:11px; white-space:nowrap; max-width:110px;" title="${subj}">${short}</th>`;
+                                    return `<th style="padding:10px 8px; text-align:center; color:#cbd5e1; font-size:11px; white-space:nowrap; max-width:110px;" title="${escapeSummaryHtml(subj)}">${escapeSummaryHtml(short)}</th>`;
                                 }).join('')}
                                 <th style="padding:10px 10px; text-align:center; color:#ef4444; font-size:11px; white-space:nowrap;">Долги</th>
                                 <th style="padding:10px 10px; text-align:center; color:#fbbf24; font-size:11px; white-space:nowrap;">Ср. балл</th>
@@ -841,6 +863,7 @@
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         };
 
         modal.querySelector('#mesh-summary-copy-debtors').onclick = () => {

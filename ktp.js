@@ -12,19 +12,21 @@
 
     let isKtpRunning = false;
 
+    let ktpEnabled = true;
+    let panelSignature = null;
+    chrome.storage.sync.get(['ktpModule'], data => { ktpEnabled = data.ktpModule !== false; });
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'sync' && changes.ktpModule) ktpEnabled = changes.ktpModule.newValue !== false;
+    });
     setInterval(() => {
-        if (!document.body || isKtpRunning) return; 
-
-        chrome.storage.sync.get(null, (data) => {
-            if (data.ktpModule !== false && window.location.href.includes('planning')) {
-                if (!document.getElementById('mesh-ktp-panel')) drawKtpPanel();
-                updatePanelUI();
-            } else {
-                const p = document.getElementById('mesh-ktp-panel');
-                if (p) p.remove();
-            }
-        });
-    }, 1000);
+        if (!document.body) return;
+        const visible = ktpEnabled && location.pathname.includes('/planning');
+        const panel = document.getElementById('mesh-ktp-panel');
+        if (panel) panel.style.setProperty('display', visible ? 'flex' : 'none', 'important');
+        if (!visible || isKtpRunning) return;
+        if (!panel) { panelSignature = null; drawKtpPanel(); }
+        updatePanelUI();
+    }, 500);
 
     function drawKtpPanel() {
         const panel = document.createElement('div');
@@ -47,6 +49,9 @@
             details = JSON.parse(window.sessionStorage.getItem('MESH_KTP_DETAILS') || '{}');
         } catch(e) {}
 
+        const signature = JSON.stringify(ids);
+        if (signature === panelSignature) return;
+        panelSignature = signature;
         if (ids.length === 0) {
             panel.innerHTML = `
                 <div style="font-size:16px; font-weight:bold; color:#3498db;">🗓️ Ассистент КТП</div>
@@ -121,7 +126,8 @@
             const res = await fetch(`https://school.mos.ru/api/profeducation/plan/teacher/v1/calendar_plans/${planId}/${action}?ignore_IA=true`, {
                 method: 'POST',
                 headers: headersToUse,
-                body: JSON.stringify({})
+                body: JSON.stringify({}),
+                signal: AbortSignal.timeout(30000)
             });
             // Сохраняем текстовый ответ сервера для логов
             return { ok: res.ok, status: res.status, text: await res.text().catch(()=>"") };
@@ -131,7 +137,9 @@
     }
 
     async function runApiProcess(ids, details) {
+        if (isKtpRunning) return;
         isKtpRunning = true;
+        try {
         const panel = document.getElementById('mesh-ktp-panel');
         let success = 0; let fail = 0;
         let processLogs = []; // Хранилище ПОЛНОГО лога
@@ -248,10 +256,10 @@
             <button id="ktp-btn-reload" style="background:#2ecc71; color:white; border:none; border-radius:6px; padding:10px; cursor:pointer; width:100%; font-weight:bold;">🔄 Обновить страницу</button>
         `;
         
-        document.getElementById('ktp-btn-reload').onclick = () => window.location.reload();
+        panel.querySelector('#ktp-btn-reload').onclick = () => window.location.reload();
         
         // Логика скачивания файла .txt
-        document.getElementById('ktp-btn-log').onclick = () => {
+        panel.querySelector('#ktp-btn-log').onclick = () => {
             const header = `Лог обработки КТП МЭШ (Сгенерировано: ${new Date().toLocaleString()})\nУспешно: ${success} | Ошибок: ${fail}\n\n`;
             const blob = new Blob([header + processLogs.join('\n')], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
@@ -263,5 +271,12 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         };
+        } catch (error) {
+            const panel = document.getElementById('mesh-ktp-panel');
+            if (panel) panel.textContent = 'Обработка КТП прервана: ' + error.message;
+            console.error('MESH KTP:', error);
+        } finally {
+            isKtpRunning = false;
+        }
     }
 })();

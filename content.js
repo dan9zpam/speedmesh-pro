@@ -29,46 +29,46 @@ let initInterval = setInterval(() => {
         });
         
         let speedmeshDebounceTimer = null;
+        let globalObserver;
+        const observePage = () => globalObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
         const triggerSpeedmeshUpdate = () => {
-            if (!isRobotActive) { 
-                if (!window.meshHasResumedAutoGrades) {
-                    window.meshHasResumedAutoGrades = true;
-                    let pendingStr = sessionStorage.getItem('SPEEDMESH_PENDING_GRADES');
-                    if (pendingStr) {
-                        try {
-                            let pending = JSON.parse(pendingStr);
-                            if (pending && pending.length > 0) {
-                                setTimeout(() => {
-                                    let restored = 0;
-                                    pending.forEach(p => {
-                                        let cell = document.querySelector(`[data-test-component="${p.attr}"]`);
-                                        if (cell) {
-                                            cell.dataset.robotTargetGrade = p.grade;
-                                            restored++;
-                                        }
-                                    });
-                                    if (restored > 0) {
-                                        window.meshAutoResumeWeight = pending[0].weight;
-                                        startSmartMatrixAPI(true);
-                                    } else {
-                                        sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
-                                    }
-                                }, 2500);
-                            }
-                        } catch(e) {}
-                    }
+            globalObserver.disconnect();
+            try {
+                if (!isRobotActive) {
+                    runCoreLogic();
+                    colorizeAverageGrades();
+                    document.dispatchEvent(new CustomEvent('SpeedmeshDOMReady'));
                 }
-                runCoreLogic(); 
-                colorizeAverageGrades(); 
-                document.dispatchEvent(new CustomEvent('SpeedmeshDOMReady'));
-            }
+            } finally { observePage(); }
         };
 
-        const globalObserver = new MutationObserver(() => {
-            clearTimeout(speedmeshDebounceTimer);
-            speedmeshDebounceTimer = setTimeout(triggerSpeedmeshUpdate, 500);
+        globalObserver = new MutationObserver((records) => {
+            // Widget clocks and progress indicators must not rescan the journal.
+            const isWidget = node => {
+                const element = node.nodeType === 1 ? node : node.parentElement;
+                return !!element?.closest('[id^="mesh-"], [id^="speedmesh-"], .mesh-phantom-grade, .api-success-badge, .api-error-badge');
+            };
+            if (records.every(record => isWidget(record.target) ||
+                (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].length > 0 &&
+                [...record.addedNodes, ...record.removedNodes].every(isWidget)))) return;
+            // Throttle: continuous page mutations must not postpone updates forever.
+            if (speedmeshDebounceTimer) return;
+            speedmeshDebounceTimer = setTimeout(() => {
+                speedmeshDebounceTimer = null;
+                triggerSpeedmeshUpdate();
+            }, 350);
         });
-        globalObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+        observePage();
+        // Old versions persisted automatic POST retries across reloads. Never replay them.
+        sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
+        let currentRoute = location.href;
+        setInterval(() => {
+            if (location.href === currentRoute) return;
+            currentRoute = location.href;
+            if (isRobotActive) meshAbortProcess = true;
+            removePhantomsAndPanel();
+            triggerSpeedmeshUpdate();
+        }, 300);
         triggerSpeedmeshUpdate();
     }
 }, 50);
@@ -76,7 +76,7 @@ let initInterval = setInterval(() => {
 chrome.runtime.onMessage.addListener((req) => {
     if (req.action === "updateSettings") {
         extSettings = { ...extSettings, ...req.settings };
-        if (extSettings.autoGrader === false) removePhantomsAndPanel();
+        if (extSettings.autoGrader === false) { meshAbortProcess = true; removePhantomsAndPanel(); }
     }
     if (req.action === "rollbackData") {
         localStorage.removeItem('MESH_ACHIEVEMENTS_PRO');
@@ -233,12 +233,12 @@ function removePhantomsAndPanel() {
     document.querySelectorAll('.mesh-phantom-grade').forEach(el => el.remove());
     document.querySelectorAll('.mesh-col-selectable').forEach(el => el.classList.remove('mesh-col-selectable', 'mesh-col-selected'));
     document.querySelectorAll('[data-robot-target-grade]').forEach(el => el.removeAttribute('data-robot-target-grade'));
-    let p = document.getElementById('mesh-robot-panel'); if (p) p.style.display = 'none';
+    let p = document.getElementById('mesh-robot-panel'); if (p) p.remove();
     isColumnPickerActive = false;
 }
 
 function colorizeAverageGrades() {
-    if (!extSettings.highlightGrades) return;
+    if (!extSettings.highlightGrades || !location.pathname.includes('/journal')) return;
     document.querySelectorAll('td, [role="cell"], [role="gridcell"]').forEach(cell => {
         const text = cell.innerText.trim();
         if (/^[2-5][.,]\d{1,2}$/.test(text) && !cell.dataset.meshColored) {
@@ -557,6 +557,8 @@ function drawRobotPanel(count) {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function startSmartMatrixAPI(isAutoResume = false) {
+    if (isRobotActive || !extSettings.autoGrader || !location.pathname.includes('/journal')) return;
+    const operationRoute = location.href;
     if (isAutoResume instanceof Event) isAutoResume = false;
 
     let cells = Array.from(document.querySelectorAll('[data-robot-target-grade]'));
@@ -574,7 +576,8 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     }
 
     isRobotActive = true; 
-    meshAbortProcess = false; 
+    meshAbortProcess = false;
+    try {
 
     let pendingToSave = cells.map(c => {
         let attrNode = c.hasAttribute('data-test-component') ? c : c.querySelector('[data-test-component*="markCell"]');
@@ -603,7 +606,7 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     if(tk) aupd_token = decodeURIComponent(tk[1]); if(pr) profile_id = decodeURIComponent(pr[1]);
     try { meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}"); let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization']; if(auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', ''); let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id']; if(pId) profile_id = pId; } catch(e) {}
 
-    if (!aupd_token || !profile_id) { alert("❌ Ошибка авторизации. Перехват токена не удался. Обновите страницу (F5)."); isRobotActive = false; return; }
+    if (!aupd_token || !profile_id) { sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES'); alert("❌ Ошибка авторизации. Перехват токена не удался. Обновите страницу (F5)."); isRobotActive = false; return; }
 
     let stolenWeight2CfId = null; let stolenWeight1CfId = null; let allPageCfIds = new Set();
     document.querySelectorAll('[data-test-component*="markCell"]').forEach(cell => {
@@ -622,7 +625,7 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     try { const stored = window.sessionStorage.getItem('MESH_GLOBAL_DB'); if (stored) localDb = JSON.parse(stored); } catch(e) {}
 
     for (let i = 0; i < cells.length; i++) {
-        if (meshAbortProcess) break;
+        if (meshAbortProcess || location.href !== operationRoute) break;
 
         const cell = cells[i]; const gradeStr = cell.dataset.robotTargetGrade;
         if(p) { let counter = document.getElementById('mesh-robot-count'); if (counter) counter.innerText = `${i+1} / ${cells.length}`; }
@@ -668,28 +671,28 @@ async function startSmartMatrixAPI(isAutoResume = false) {
             let success = false; let lastErrTxt = ""; let returnedMarkId = null;
 
             for (let combo of combosToTry) {
-                if (meshAbortProcess) break; 
+                if (meshAbortProcess || location.href !== operationRoute) break;
                 try {
                     let reqHeaders = { "Accept": "application/json", "Content-Type": "application/json", "Authorization": `Bearer ${aupd_token}`, "Profile-Id": profile_id, ...meshStolenHeaders, "x-mes-subsystem": "journalw" };
                     const payload = { "comment": "", "is_exam": false, "is_criterion": false, "is_point": false, "point_date": "", "schedule_lesson_id": lessonId, "student_profile_id": studentId, "teacher_id": parseInt(profile_id, 10), "control_form_id": combo.c, "weight": combo.w, "theme_frame_integration_id": null, "course_lesson_topic_id": null, "grade_origins": [{"grade_origin": gradeStr, "grade_system_id": combo.gs}], "grade_system_type": false };
-                    const res = await fetch("https://school.mos.ru/api/profeducation/core/teacher/v1/marks", { method: "POST", headers: reqHeaders, body: JSON.stringify(payload) });
+                    const res = await fetch("https://school.mos.ru/api/profeducation/core/teacher/v1/marks", { method: "POST", headers: reqHeaders, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
                     if (res.ok) { 
                         success = true; winningGsId = combo.gs; 
                         try { const resData = await res.json(); returnedMarkId = resData.id || (Array.isArray(resData) && resData[0] ? resData[0].id : null); } catch(e) {}
-                        break; 
+                        break;
                     } else { 
                         lastErrTxt = await res.text(); 
-                        if (res.status === 401 || res.status === 403 || res.status === 500 || res.status === 502) {
-                            console.warn("Auto-reloading page due to API error...", res.status);
-                            window.location.reload();
-                            return;
+                        if (res.status === 401 || res.status === 403 || res.status === 429 || res.status >= 500) {
+                            // Retrying a POST after reload can duplicate marks and loop forever.
+                            meshAbortProcess = true;
+                            break;
                         }
                     }
                 } catch (e) { 
                     lastErrTxt = e.message; 
-                    console.warn("Network error, reloading...", e);
-                    window.location.reload();
-                    return; 
+                    // The server may have accepted the mark before the connection failed.
+                    meshAbortProcess = true;
+                    break;
                 }
             }
 
@@ -735,13 +738,23 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
 
     if (err > 0 && firstFatalErrorLog && ok === 0) {
-        let logText = JSON.stringify(firstFatalErrorLog, null, 2); console.error("🔥 Ошибка сервера:\n", logText); prompt(`Сервер отклонил оценки. Лог ошибки:\n\n`, logText);
-    } else if (p) {
+        let logText = JSON.stringify(firstFatalErrorLog, null, 2); console.error("🔥 Ошибка сервера:\n", logText); prompt(`Отправка остановлена. Перед повтором проверьте фактические оценки в журнале. Лог ошибки:\n\n`, logText);
+    }
+    if (p) {
         p.innerHTML = `
-            <div style="font-size:16px; font-weight:bold; color:#2ecc71; margin-right: 10px;">✅ Выставлено: ${ok} шт.</div>
+            <div style="font-size:12px;">${meshAbortProcess ? "Остановлено. Перед повтором проверьте журнал." : "Обработка завершена."}</div>
+            <div style="font-size:16px; font-weight:bold; color:#2ecc71; margin-right: 10px;">Выставлено: ${ok} | Ошибок: ${err}</div>
             <button class="mesh-panel-reload-btn" style="background:#2ecc71; color:white; border:none; border-radius:8px; padding:10px 20px; cursor:pointer; font-weight:bold; font-size:14px; box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); transition: 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">Обновить (Синхронизация с МЭШ)</button>
         `;
         bindReloadButtons(p);
+    }
+    } catch (error) {
+        console.error('MESH grades:', error);
+        const panel = document.getElementById('mesh-robot-panel');
+        if (panel) panel.textContent = 'Отправка прервана. Проверьте оценки в журнале перед повтором. ' + error.message;
+    } finally {
+        isRobotActive = false;
+        sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES');
     }
 }
 // === ГЛОБАЛЬНЫЙ ПЕРЕХВАТЧИК КЛИКОВ (EVENT DELEGATION) ===

@@ -182,7 +182,7 @@
         const card = document.createElement('div');
         card.id = 'mesh-timer-card';
         card.title = 'Двойной клик: открыть журнал текущего урока';
-        card.style.cssText = `position: fixed; top: 12px; right: 350px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 4px; cursor: pointer; user-select: none; align-items: flex-end; transition: 0.3s;`;
+        card.style.cssText = `position: fixed; bottom: 20px; right: 20px; z-index: 9999999; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 4px; cursor: pointer; user-select: none; align-items: flex-end; transition: 0.3s;`;
         card.innerHTML = `
             <div id="mesh-timer-inner" style="position: relative; border-radius: 18px; padding: 4px 10px; display: flex; align-items: center; gap: 6px; overflow: hidden; backdrop-filter: blur(10px) saturate(180%); box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: all 0.3s; ">
                 <div id="mesh-timer-bg" style="position:absolute; top:0; left:0; height:100%; width:0%; z-index:0; transition:width 1s linear, background 0.3s;"></div>
@@ -194,7 +194,7 @@
                 </div>
             </div>
             
-            <div id="mesh-timer-settings-panel" style="display:none; position:absolute; top:110%; right:0; background:rgba(20,25,30,0.9); backdrop-filter:blur(10px); padding:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); width:200px; flex-direction:column; gap:8px; z-index:10000000; box-shadow: 0 5px 20px rgba(0,0,0,0.5);">
+            <div id="mesh-timer-settings-panel" style="display:none; position:absolute; bottom:110%; right:0; background:rgba(20,25,30,0.9); backdrop-filter:blur(10px); padding:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.1); width:200px; flex-direction:column; gap:8px; z-index:10000000; box-shadow: 0 5px 20px rgba(0,0,0,0.5);">
                 <div style="color:white; font-size:11px; font-weight:bold; margin-bottom:2px; display:flex; justify-content:space-between;">
                     <span>Настройки</span>
                     <span id="mesh-timer-reset-colors" style="cursor:pointer; color:#e74c3c; font-size:9px;">Сброс цветов</span>
@@ -329,13 +329,11 @@
 
         // Кастомная логика перетаскивания (без лишних кнопок)
         let isDragging = false;
-        let hasMoved = false;
         let startX, startY, initialX, initialY;
         
         card.onmousedown = (e) => {
-            if (e.target.tagName === 'INPUT' || e.target.id === 'mesh-timer-settings-btn') return;
+            if (e.target.closest('input, select, button, #mesh-timer-settings-btn, #mesh-timer-settings-panel')) return;
             isDragging = true;
-            hasMoved = false;
             startX = e.clientX; startY = e.clientY;
             const rect = card.getBoundingClientRect();
             initialX = rect.left; initialY = rect.top;
@@ -346,9 +344,9 @@
             if (!isDragging) return;
             const dx = e.clientX - startX;
             const dy = e.clientY - startY;
-            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
-            card.style.left = (initialX + dx) + 'px';
-            card.style.top = (initialY + dy) + 'px';
+            card.style.left = Math.max(0, Math.min(window.innerWidth - card.offsetWidth, initialX + dx)) + 'px';
+            card.style.top = Math.max(0, Math.min(window.innerHeight - card.offsetHeight, initialY + dy)) + 'px';
+            card.style.bottom = 'auto';
             card.style.right = 'auto'; // Сбрасываем привязку к правому краю
         });
         
@@ -356,23 +354,14 @@
             if (isDragging) {
                 isDragging = false;
                 card.style.transition = '0.3s';
-                if (hasMoved) {
-                    chrome.storage.local.set({ timerLeft: card.style.left, timerTop: card.style.top });
-                }
             }
         });
-chrome.storage.local.get(['timerLeft', 'timerTop'], (data) => {
-            if (data.timerLeft && data.timerTop) { 
-                let left = parseInt(data.timerLeft, 10);
-                let top = parseInt(data.timerTop, 10);
-                if (left < 0) left = 15;
-                if (left > window.innerWidth - 50) left = window.innerWidth - 300;
-                if (top < 0) top = 15;
-                if (top > window.innerHeight - 50) top = 15;
-                card.style.right = 'auto'; 
-                card.style.left = left + 'px'; 
-                card.style.top = top + 'px'; 
-            }
+        // Start in the bottom-right corner on each page load; dragging is session-only.
+        window.addEventListener('resize', () => {
+            card.style.left = 'auto';
+            card.style.top = 'auto';
+            card.style.right = '20px';
+            card.style.bottom = '20px';
         });
 
         

@@ -1,0 +1,239 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { JSDOM } = require('jsdom');
+const JSZip = require('../jszip.min.js');
+const source = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+
+function setup(t, url = 'https://school.mos.ru/journal') {
+    const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url, runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    t.after(() => w.close());
+    Object.defineProperty(w.HTMLElement.prototype, 'innerText', { get() { return this.textContent; }, set(v) { this.textContent = v; } });
+    w.HTMLElement.prototype.scrollIntoView = () => {};
+    const intervals = new Map(), timeouts = new Map();
+    let id = 0;
+    w.setInterval = (fn, delay) => { intervals.set(++id, { fn, delay }); return id; };
+    w.clearInterval = key => intervals.delete(key);
+    w.setTimeout = (fn, delay) => { timeouts.set(++id, { fn, delay }); return id; };
+    w.clearTimeout = key => timeouts.delete(key);
+    const changes = [], messages = [], alerts = [], logs = [], requests = [];
+    const settings = {};
+    w.console = { log() {}, warn() {}, error: (...args) => logs.push(args) };
+    w.confirm = () => true;
+    w.alert = text => alerts.push(text);
+    w.prompt = text => alerts.push(text);
+    w.chrome = {
+        storage: {
+            local: { get: (keys, cb) => cb({}), set() {} },
+            sync: { get: (keys, cb) => cb(settings) },
+            onChanged: { addListener: fn => changes.push(fn) }
+        },
+        runtime: { getURL: file => 'chrome-extension://test/' + file, onMessage: { addListener: fn => messages.push(fn) } }
+    };
+    w.fetch = async (...args) => { requests.push(args); return { ok: false, status: 503, text: async () => 'Unavailable' }; };
+    w.document.cookie = 'aupd_token=test';
+    w.document.cookie = 'profile_id=123';
+    const tick = delay => [...intervals.values()].filter(v => v.delay === delay).forEach(v => v.fn());
+    const flush = async (rounds = 10) => {
+        for (let n = 0; n < rounds; n++) {
+            await new Promise(resolve => setImmediate(resolve));
+            const ready = [...timeouts.entries()].filter(([, v]) => v.delay <= 1000);
+            ready.forEach(([key, { fn }]) => { timeouts.delete(key); fn(); });
+        }
+    };
+    const load = (file, hook = '') => {
+        let code = source(file);
+        if (hook) code = code.replace(/\}\)\(\);?\s*$/, hook + '\n})();');
+        if (file === 'content.js') code += '\nwindow.coreTest = { isRunning: () => isRobotActive };';
+        w.eval(code);
+    };
+    return { w, tick, flush, load, settings, changes, alerts, logs, requests, timeouts };
+}
+
+function gradeCells(w, count = 1) {
+    w.document.body.innerHTML = '<table><tbody>' + Array.from({ length: count }, (_, i) => `<tr><td data-test-component="markCell-${i + 1}_100_200" data-robot-target-grade="5"></td></tr>`).join('') + '</tbody></table>';
+}
+
+test('legacy pending grades never replay; SPA navigation removes the panel despite important CSS', async t => {
+    const s = setup(t);
+    s.w.sessionStorage.setItem('SPEEDMESH_PENDING_GRADES', JSON.stringify([{ attr: 'markCell-1_100_200', grade: '5' }]));
+    s.load('content.js'); s.tick(50);
+    s.w.eval('drawRobotPanel(0)');
+    assert.equal(s.w.getComputedStyle(s.w.document.getElementById('mesh-robot-panel')).display, 'flex');
+    s.w.history.pushState({}, '', '/schedule'); s.tick(300);
+    await s.flush();
+    assert.equal(s.w.document.getElementById('mesh-robot-panel'), null);
+    assert.equal(s.w.sessionStorage.getItem('SPEEDMESH_PENDING_GRADES'), null);
+    assert.equal(s.requests.length, 0);
+});
+
+for (const failure of [401, 403, 429, 500, 502, 'network']) {
+    test(`grade failure ${failure} stops without reload or automatic retries`, async t => {
+        const s = setup(t); s.load('content.js'); s.tick(50); gradeCells(s.w, 2);
+        let calls = 0;
+        s.w.fetch = async () => {
+            calls++;
+            if (failure === 'network') throw new Error('Disconnected');
+            return { ok: false, status: failure, text: async () => 'Error' };
+        };
+        const pending = s.w.eval('startSmartMatrixAPI(false)');
+        await s.flush(); await pending;
+        assert.equal(calls, 1);
+        assert.equal(s.w.coreTest.isRunning(), false);
+        assert.equal(s.w.sessionStorage.getItem('SPEEDMESH_PENDING_GRADES'), null);
+        assert.equal(s.logs.some(args => String(args).includes('Not implemented')), false);
+    });
+}
+
+test('leaving the journal during a request stops subsequent marks and removes the progress panel', async t => {
+    const s = setup(t); s.load('content.js'); s.tick(50); gradeCells(s.w, 2); s.w.eval('drawRobotPanel(2)');
+    let resolveRequest, calls = 0;
+    s.w.fetch = () => { calls++; return new Promise(resolve => { resolveRequest = resolve; }); };
+    const pending = s.w.eval('startSmartMatrixAPI(false)');
+    s.w.history.pushState({}, '', '/schedule'); s.tick(300);
+    resolveRequest({ ok: true, json: async () => ({ id: 1 }) });
+    await s.flush(); await pending;
+    assert.equal(calls, 1);
+    assert.equal(s.w.document.getElementById('mesh-robot-panel'), null);
+    assert.equal(s.w.coreTest.isRunning(), false);
+});
+
+test('widget updates do not scan the journal; real page mutations are throttled', async t => {
+    const s = setup(t); s.load('content.js'); s.tick(50); await s.flush();
+    const card = s.w.document.createElement('div'); card.id = 'mesh-timer-card'; s.w.document.body.append(card);
+    await s.flush();
+    for (let i = 0; i < 10; i++) { card.textContent = String(i); await Promise.resolve(); }
+    assert.equal([...s.timeouts.values()].filter(v => v.delay === 350).length, 0);
+    const table = s.w.document.createElement('table'); s.w.document.body.append(table);
+    await Promise.resolve(); table.textContent = 'changed'; await Promise.resolve();
+    assert.equal([...s.timeouts.values()].filter(v => v.delay === 350).length, 1);
+});
+
+test('KTP runs finish and recalc in background, hides outside planning and retains completion', async t => {
+    const s = setup(t, 'https://school.mos.ru/planning/programs');
+    s.w.sessionStorage.setItem('MESH_KTP_IDS', '[7]');
+    s.load('ktp.js'); s.tick(500); await s.flush();
+    const panel = s.w.document.getElementById('mesh-ktp-panel');
+    const runButton = panel.querySelector('#ktp-btn-run');
+    s.tick(500);
+    assert.equal(panel.querySelector('#ktp-btn-run'), runButton);
+    let finishRequest;
+    s.w.fetch = url => {
+        s.requests.push(url);
+        return url.includes('/finish?') ? new Promise(resolve => { finishRequest = resolve; }) : Promise.resolve({ ok: true, status: 200, text: async () => '{}' });
+    };
+    runButton.click(); runButton.click();
+    assert.equal(s.requests.length, 1);
+    s.w.history.pushState({}, '', '/schedule'); s.tick(500);
+    assert.equal(s.w.getComputedStyle(panel).display, 'none');
+    finishRequest({ ok: true, status: 200, text: async () => '{}' });
+    await s.flush();
+    assert.equal(s.requests.length, 2);
+    assert(s.requests[1].includes('/recalc?'));
+    assert(panel.textContent.includes('Готово'));
+    s.w.history.pushState({}, '', '/planning/programs'); s.tick(500);
+    assert.equal(s.w.getComputedStyle(panel).display, 'flex');
+    assert(panel.textContent.includes('Готово'));
+    s.changes.forEach(fn => fn({ ktpModule: { newValue: false } }, 'sync')); s.tick(500);
+    assert.equal(s.w.getComputedStyle(panel).display, 'none');
+});
+
+test('timer starts in bottom-right despite old saved position and settings open above it', t => {
+    const s = setup(t);
+    s.w.chrome.storage.local.get = (keys, cb) => cb({ timerLeft: '100px', timerTop: '10px' });
+    s.load('timer.js'); s.tick(1000);
+    const card = s.w.document.getElementById('mesh-timer-card');
+    assert.equal(card.style.right, '20px'); assert.equal(card.style.bottom, '20px'); assert.equal(card.style.top, '');
+    assert.equal(s.w.document.getElementById('mesh-timer-settings-panel').style.bottom, '110%');
+});
+
+async function workbook(rows, sharedStrings = '') {
+    const zip = new JSZip();
+    zip.file('xl/worksheets/sheet1.xml', `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`);
+    if (sharedStrings) zip.file('xl/sharedStrings.xml', `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${sharedStrings}</sst>`);
+    return zip.generateAsync({ type: 'uint8array' });
+}
+const str = (ref, value) => `<c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c>`;
+const num = (ref, value) => `<c r="${ref}"><v>${value}</v></c>`;
+
+function summary(s) {
+    s.w.JSZip = JSZip;
+    s.load('mentor_journals.js', 'window.summaryTest = { parseJournalXlsx, buildAndShowSummarySheet, renderSummaryModalUI, isStudentName };');
+    return s.w.summaryTest;
+}
+
+test('XLSX reads shared and inline names, double marks and ignores totals, dates, absences and topics', async t => {
+    const s = setup(t), api = summary(s);
+    const data = await workbook(
+        `<row r="1">${str('A1', 'ФИО')}${str('F1', 'Средний балл')}${str('G1', 'Итог')}${str('H1', 'Тема урока')}</row>` +
+        `<row r="2"><c r="A2" t="s"><v>0</v></c>${num('B2', 5)}${str('C2', '4/5')}${str('D2', 'н')}${str('E2', '01.10')}${num('F2', 4.67)}${num('G2', 3)}${num('H2', 2)}</row>` +
+        `<row r="3">${str('A3', 'Петров И.В.')}${num('B3', 52)}${str('C3', '2/5abc')}${str('D3', 'б')}</row>`,
+        '<si><r><t>Иванов </t></r><r><t>Иван Иванович</t></r></si>');
+    const parsed = await api.parseJournalXlsx(data);
+    assert.equal(parsed.length, 2);
+    assert.equal(parsed[0].avg, 4.67); assert.equal(parsed[0].marksCount, 3);
+    assert.equal(parsed[1].name, 'Петров И.В.'); assert.equal(parsed[1].avg, 2); assert.equal(parsed[1].marksCount, 1);
+    const zip = new JSZip();
+    await assert.rejects(api.parseJournalXlsx(await zip.generateAsync({ type: 'uint8array' })), /отсутствует/);
+});
+
+test('summary fetches fresh exports, does not attest missing data, and fails visibly for unavailable journals', async t => {
+    const s = setup(t), api = summary(s);
+    const good = await workbook(`<row r="1">${str('A1', 'Иванов Иван')}${num('B1', 5)}</row><row r="2">${str('A2', 'Петров Петр')}${num('B2', 2)}</row>`);
+    const empty = await workbook(`<row r="1">${str('A1', 'Иванов Иван')}${str('B1', 'н')}</row>`);
+    const groups = [{ id: 1, name: 'ИСП2311 Предмет &lt;1&gt;' }, { id: 2, name: 'ИСП2311 Предмет 2' }];
+    s.w.fetch = async url => { s.requests.push(url); return { ok: true, blob: async () => url.includes('group_ids=1') ? good : empty }; };
+    const btn = s.w.document.createElement('button'); btn.innerText = 'Ведомость'; s.w.document.body.append(btn);
+    let pending = api.buildAndShowSummarySheet(groups, btn); await s.flush(30); await pending;
+    const modal = s.w.document.getElementById('speedmesh-summary-modal'); assert(modal);
+    assert(modal.querySelector('#mesh-summary-tbody').textContent.includes('Нет данных'));
+    assert.equal(btn.style.pointerEvents, 'auto');
+    modal.remove();
+    s.w.fetch = async url => { s.requests.push(url); return { ok: false, status: 500 }; };
+    pending = api.buildAndShowSummarySheet(groups, btn); await s.flush(30); await pending;
+    assert.equal(s.requests.length, 4);
+    assert.equal(s.w.document.getElementById('speedmesh-summary-modal'), null);
+    assert(s.w.document.getElementById('speedmesh-toast-notify').textContent.includes('HTTP 500'));
+    assert.equal(btn.style.pointerEvents, 'auto');
+});
+
+test('KTP interceptor replaces visited lists and keeps IDs on detail responses', async t => {
+    const s = setup(t);
+    let data;
+    s.w.fetch = async () => ({ clone: () => ({ json: async () => data }) });
+    s.load('ktp_interceptor.js');
+    const request = async response => {
+        data = response;
+        await s.w.fetch('https://school.mos.ru/api/profeducation/plan/teacher/v1/calendar_plans');
+        await Promise.resolve();
+        return JSON.parse(s.w.sessionStorage.getItem('MESH_KTP_IDS'));
+    };
+    assert.deepEqual(await request([{ id: 1 }, { id: 2 }]), [1, 2]);
+    assert.deepEqual(await request({ items: [{ id: 3 }] }), [3]);
+    assert.deepEqual(await request({ id: 3, name: 'Details' }), [3]);
+    assert.deepEqual(await request({ items: [] }), []);
+});
+
+test('summary CSV export preserves names, decimal separators and quoted headers', async t => {
+    const s = setup(t), api = summary(s);
+    const subject = 'ОС "Практика" <тест>';
+    const students = [{ name: 'Иванов Иван', subjects: { [subject]: 4.5 }, overallAvg: 4.5, failedCount: 0, status: 'Отличник' }];
+    let exported, filename, revoked;
+    s.w.URL.createObjectURL = blob => { exported = blob; return 'blob:https://school.mos.ru/test'; };
+    s.w.URL.revokeObjectURL = value => { revoked = value; };
+    s.w.HTMLAnchorElement.prototype.click = function () { filename = this.download; };
+    api.renderSummaryModalUI('ИСП2311', 2026, 2027, [subject], students, '03.11.2026', '2026-11-03');
+    const modal = s.w.document.getElementById('speedmesh-summary-modal');
+    assert.equal(modal.querySelector('th[title]').getAttribute('title'), subject);
+    modal.querySelector('#mesh-summary-export-csv').click();
+    const csv = await new Promise((resolve, reject) => {
+        const reader = new s.w.FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsText(exported);
+    });
+    assert(csv.includes('ОС ""Практика"" <тест>'));
+    assert(csv.includes('"Иванов Иван";"4,50"'));
+    assert.equal(filename, 'Сводная_ведомость_ИСП2311_на_2026-11-03.csv');
+    await s.flush();
+    assert.equal(revoked, 'blob:https://school.mos.ru/test');
+});
