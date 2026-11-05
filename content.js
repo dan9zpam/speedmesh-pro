@@ -421,14 +421,19 @@ function runCoreLogic() {
         if (cells.length === 0) cells = Array.from(row.querySelectorAll('[data-test-component*="markCell"]')).map(mc => mc.parentElement);
         
         cells.forEach(c => {
-            let hasRealContent = false;
+            let hasRealContent = !!c.querySelector('.api-success-badge');
             let markCell = c.hasAttribute('data-test-component') ? c : c.querySelector('[data-test-component*="markCell"]');
             if (markCell) {
-                if (/[2-5НнБбОо]/.test(markCell.textContent)) hasRealContent = true;
+                let gradeContent = markCell;
+                if (markCell.querySelector('.mesh-phantom-grade')) {
+                    gradeContent = markCell.cloneNode(true);
+                    gradeContent.querySelectorAll('.mesh-phantom-grade').forEach(node => node.remove());
+                }
+                if (/[2-5НнБбОо]/.test(gradeContent.textContent)) hasRealContent = true;
             } else {
                 for (let node of c.childNodes) {
                     if (node.nodeType === 3 && node.nodeValue.trim() !== '') { hasRealContent = true; break; }
-                    if (node.nodeType === 1 && !node.classList.contains('mesh-phantom-grade') && !node.classList.contains('api-success-badge') && node.textContent.trim() !== '') { hasRealContent = true; break; }
+                    if (node.nodeType === 1 && !node.classList.contains('mesh-phantom-grade') && node.textContent.trim() !== '') { hasRealContent = true; break; }
                 }
             }
 
@@ -606,10 +611,32 @@ async function startSmartMatrixAPI(isAutoResume = false) {
     }
 
     let ok = 0; let err = 0; let firstFatalErrorLog = null; let winningGsId = null; 
-    let aupd_token = null; let profile_id = null; let meshStolenHeaders = {};
-    const tk = document.cookie.match(/(?:^|; )aupd_token=([^;]*)/); const pr = document.cookie.match(/(?:^|; )profile_id=([^;]*)/);
-    if(tk) aupd_token = decodeURIComponent(tk[1]); if(pr) profile_id = decodeURIComponent(pr[1]);
-    try { meshStolenHeaders = JSON.parse(window.sessionStorage.getItem('MESH_KTP_HEADERS') || "{}"); let auth = meshStolenHeaders['Authorization'] || meshStolenHeaders['authorization']; if(auth && auth.includes('Bearer ')) aupd_token = auth.replace('Bearer ', ''); let pId = meshStolenHeaders['Profile-Id'] || meshStolenHeaders['profile-id'] || meshStolenHeaders['Profile-id']; if(pId) profile_id = pId; } catch(e) {}
+    let aupd_token = null; let profile_id = null;
+    const meshStolenHeaders = new Headers();
+    // Headers from monitoring and native requests may use different casing. set() replaces
+    // equivalent keys; passing a spread object to fetch() would concatenate their values.
+    for (const key of ['MESH_AUTH_HEADERS', 'MESH_KTP_HEADERS']) {
+        try {
+            const captured = JSON.parse(sessionStorage.getItem(key) || '{}');
+            for (const [name, value] of Object.entries(captured)) {
+                if (typeof value === 'string') meshStolenHeaders.set(name, value);
+            }
+        } catch (error) { console.warn('MESH: не удалось прочитать заголовки запроса'); }
+    }
+    const singleHeaderValue = name => {
+        const values = (meshStolenHeaders.get(name) || '').split(',').map(value => value.trim());
+        return new Set(values).size === 1 ? values[0] : '';
+    };
+    const tk = document.cookie.match(/(?:^|; )aupd_token=([^;]*)/);
+    const pr = document.cookie.match(/(?:^|; )profile_id=([^;]*)/);
+    if (tk) aupd_token = decodeURIComponent(tk[1]);
+    if (pr) profile_id = decodeURIComponent(pr[1]);
+    const capturedAuth = singleHeaderValue('authorization');
+    const capturedProfile = singleHeaderValue('profile-id');
+    if (/^Bearer\s+[^\s,]+$/i.test(capturedAuth) && /^\d+$/.test(capturedProfile)) {
+        aupd_token = capturedAuth.replace(/^Bearer\s+/i, '');
+        profile_id = capturedProfile;
+    }
 
     if (!aupd_token || !profile_id) { task?.finish('error', 'Нет авторизации. Обновите страницу и войдите в МЭШ.'); sessionStorage.removeItem('SPEEDMESH_PENDING_GRADES'); alert("❌ Ошибка авторизации. Перехват токена не удался. Обновите страницу (F5)."); isRobotActive = false; return; }
 
@@ -679,7 +706,12 @@ async function startSmartMatrixAPI(isAutoResume = false) {
             for (let combo of combosToTry) {
                 if (meshAbortProcess || location.href !== operationRoute) break;
                 try {
-                    let reqHeaders = { "Accept": "application/json", "Content-Type": "application/json", "Authorization": `Bearer ${aupd_token}`, "Profile-Id": profile_id, ...meshStolenHeaders, "x-mes-subsystem": "journalw" };
+                    const reqHeaders = new Headers(meshStolenHeaders);
+                    reqHeaders.set('Accept', 'application/json');
+                    reqHeaders.set('Content-Type', 'application/json');
+                    reqHeaders.set('Authorization', `Bearer ${aupd_token}`);
+                    reqHeaders.set('Profile-Id', profile_id);
+                    reqHeaders.set('x-mes-subsystem', 'journalw');
                     const payload = { "comment": "", "is_exam": false, "is_criterion": false, "is_point": false, "point_date": "", "schedule_lesson_id": lessonId, "student_profile_id": studentId, "teacher_id": parseInt(profile_id, 10), "control_form_id": combo.c, "weight": combo.w, "theme_frame_integration_id": null, "course_lesson_topic_id": null, "grade_origins": [{"grade_origin": gradeStr, "grade_system_id": combo.gs}], "grade_system_type": false };
                     const res = await fetch("https://school.mos.ru/api/profeducation/core/teacher/v1/marks", { method: "POST", headers: reqHeaders, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
                     if (res.ok) { 

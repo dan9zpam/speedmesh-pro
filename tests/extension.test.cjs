@@ -9,6 +9,7 @@ const source = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 function setup(t, url = 'https://school.mos.ru/journal') {
     const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url, runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window;
+    w.Headers = Headers;
     t.after(() => w.close());
     Object.defineProperty(w.HTMLElement.prototype, 'innerText', { get() { return this.textContent; }, set(v) { this.textContent = v; } });
     w.HTMLElement.prototype.scrollIntoView = () => {};
@@ -338,4 +339,63 @@ test('failed Excel creation restores the button and displays an error task', asy
     assert.equal(button.disabled, false);
     const row = s.w.document.querySelector('.mesh-task-row');
     assert.equal(row.dataset.status, 'error'); assert(row.textContent.includes('Тестовая ошибка'));
+});
+
+test('grade submission survives lowercase authorization captured by a background monitor', async t => {
+    const s = setup(t); s.w.Headers = Headers;
+    s.load('task_center.js'); s.load('content.js'); s.tick(50); gradeCells(s.w);
+    s.w.sessionStorage.setItem('MESH_KTP_HEADERS', JSON.stringify({ authorization: 'Bearer captured-token', 'profile-id': '123', 'x-mes-subsystem': 'teacherspow' }));
+    let received;
+    s.w.fetch = async (url, options) => {
+        const headers = new Headers(options.headers); received = headers;
+        const valid = headers.get('authorization') === 'Bearer captured-token' && headers.get('profile-id') === '123';
+        return { ok: valid, status: valid ? 200 : 401, text: async () => 'Invalid authorization', json: async () => ({ id: 1 }) };
+    };
+    const pending = s.w.eval('startSmartMatrixAPI(false)'); await s.flush(); await pending;
+    assert.equal(received.get('authorization'), 'Bearer captured-token');
+    assert.equal(received.get('profile-id'), '123');
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'done');
+});
+
+test('selecting a grade on a markCell wrapper preserves it until the send button is clicked', async t => {
+    const s = setup(t); s.w.Headers = Headers;
+    s.w.document.body.innerHTML = '<table><tr><td>Иванов Иван</td><td data-test-component="markCell-1_100_200"></td></tr></table>';
+    s.load('task_center.js'); s.load('content.js'); s.tick(50);
+    const mark = s.w.document.querySelector('[data-test-component^="markCell"]');
+    const phantom = mark.querySelector('.mesh-phantom-grade'); assert(phantom);
+    phantom.dispatchEvent(new s.w.MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    assert.equal(mark.dataset.robotTargetGrade, '2');
+    assert(s.w.document.getElementById('mesh-robot-btn'));
+    let payload;
+    s.w.fetch = async (url, options) => { payload = JSON.parse(options.body); return { ok: true, json: async () => ({ id: 1 }) }; };
+    s.w.document.getElementById('mesh-global-weight').value = '1';
+    s.w.document.getElementById('mesh-robot-btn').click(); await s.flush();
+    assert.equal(payload.weight, 1);
+    assert.equal(payload.grade_origins[0].grade_origin, '2');
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'done');
+});
+
+test('grade submission repairs already concatenated copies of the same captured credentials', async t => {
+    const s = setup(t); s.load('task_center.js'); s.load('content.js'); s.tick(50); gradeCells(s.w);
+    s.w.sessionStorage.setItem('MESH_AUTH_HEADERS', JSON.stringify({ authorization: 'Bearer recovered-token, Bearer recovered-token', 'profile-id': '123, 123' }));
+    let received;
+    s.w.fetch = async (url, options) => { received = new Headers(options.headers); return { ok: true, json: async () => ({ id: 1 }) }; };
+    const pending = s.w.eval('startSmartMatrixAPI(false)'); await s.flush(); await pending;
+    assert.equal(received.get('authorization'), 'Bearer recovered-token');
+    assert.equal(received.get('profile-id'), '123');
+});
+
+test('a confirmed grade in a nested markCell cannot be selected for a duplicate submission', async t => {
+    const s = setup(t);
+    s.w.document.body.innerHTML = '<table><tr><td>Иванов Иван</td><td><div data-test-component="markCell-1_100_200"></div></td></tr></table>';
+    s.load('task_center.js'); s.load('content.js'); s.tick(50);
+    const mark = s.w.document.querySelector('[data-test-component^="markCell"]');
+    const cell = mark.parentElement;
+    cell.querySelector('.mesh-phantom-grade').dispatchEvent(new s.w.MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    s.w.fetch = async () => ({ ok: true, json: async () => ({ id: 1 }) });
+    s.w.document.getElementById('mesh-robot-btn').click(); await s.flush();
+    s.w.eval('runCoreLogic()');
+    assert(cell.querySelector('.api-success-badge'));
+    assert.equal(cell.querySelector('.mesh-phantom-grade'), null);
+    assert.equal(cell.hasAttribute('data-robot-target-grade'), false);
 });

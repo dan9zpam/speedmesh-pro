@@ -25,13 +25,13 @@ const send = (method, params = {}, sessionId) => new Promise((resolve, reject) =
     const id = ++nextId; pending.set(id, { resolve, reject });
     chrome.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
 });
-const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{id:'smoke',getURL:file=>'/'+file,getManifest:()=>({version:'3.5'}),onMessage:{addListener:fn=>(window.__smokeMessages??=[]).push(fn)},sendMessage:async(message)=>message.action.includes('AbsenceMonitor')?{ok:true,settings:{enabled:true,groupName:'ИСП2311',minutes:1},state:{}}:{ok:true,hours:24,nextAt:Date.now()+86400000}},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
+const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{id:'smoke',getURL:file=>'/'+file,getManifest:()=>({version:'3.5.1'}),onMessage:{addListener:fn=>(window.__smokeMessages??=[]).push(fn)},sendMessage:async(message)=>message.action.includes('AbsenceMonitor')?{ok:true,settings:{enabled:true,groupName:'ИСП2311',minutes:1},state:{}}:{ok:true,hours:24,nextAt:Date.now()+86400000}},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
 const manifest = JSON.parse(fs.readFileSync('manifest.json'));
 const scripts = manifest.content_scripts.flatMap(group => group.js);
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8');
     if (req.url === '/journal') {
-        res.end('<!doctype html><html><head><script>' + stub + '</script></head><body style="font-family:system-ui;background:#f8fafc;padding:40px"><h1>Журнал группы • проверка интерфейса</h1><table><thead><tr><th>Обучающийся</th><th>03.11</th><th>Средний балл</th></tr></thead><tbody><tr><td>Иванов Иван</td><td data-test-component="markCell-1_100_200">5</td><td>4.75</td></tr></tbody></table>' + scripts.map(file => '<script src="/' + file + '"></script>').join('') + '</body></html>');
+        res.end('<!doctype html><html><head><script>' + stub + '</script></head><body style="font-family:system-ui;background:#f8fafc;padding:40px"><h1>Журнал группы • проверка интерфейса</h1><table><thead><tr><th>Обучающийся</th><th>03.11</th><th>Средний балл</th></tr></thead><tbody><tr><td>Иванов Иван</td><td data-test-component="markCell-1_100_200">5</td><td>4.75</td></tr><tr><td>Петров Петр</td><td><div data-test-component="markCell-2_100_200"></div></td><td>4.25</td></tr></tbody></table>' + scripts.map(file => '<script src="/' + file + '"></script>').join('') + '</body></html>');
     } else if (req.url === '/popup.html') {
         res.end(fs.readFileSync('popup.html', 'utf8').replace('<head>', '<head><script>' + stub + '</script>'));
     } else {
@@ -56,6 +56,30 @@ const server = http.createServer((req, res) => {
         };
         const bounds = await evaluate(`(()=>{const card=document.getElementById('mesh-timer-card');const r=card.getBoundingClientRect();return {right:innerWidth-r.right,bottom:innerHeight-r.bottom,text:card.innerText}})()`);
         assert(Math.abs(bounds.right - 20) < 1); assert(Math.abs(bounds.bottom - 20) < 1);
+        await evaluate(`(()=>{
+            window.confirm=()=>true;
+            sessionStorage.setItem('MESH_KTP_HEADERS',JSON.stringify({authorization:'Bearer smoke-token','profile-id':'123'}));
+            const before=window.fetch;
+            window.fetch=async(url,options)=>{
+                if(String(url).endsWith('/marks')&&options?.method==='POST') {
+                    const headers=new Headers(options.headers);
+                    window.__smokeGrade={authValid:headers.get('authorization')==='Bearer smoke-token',profileValid:headers.get('profile-id')==='123',payload:JSON.parse(options.body)};
+                    return new Response(JSON.stringify({id:777}),{status:200,headers:{'Content-Type':'application/json'}});
+                }
+                return before(url,options);
+            };
+            const plus=document.querySelector('.mesh-phantom-grade');
+            if(!plus)throw new Error('No grade selection control');
+            plus.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));
+            document.getElementById('mesh-global-weight').value='1';
+            document.getElementById('mesh-robot-btn').click();
+        })()`);
+        await evaluate(`new Promise((resolve,reject)=>{const end=Date.now()+5000;const check=()=>document.querySelector('.mesh-task-row')?.dataset.status==='done'?resolve(true):Date.now()>end?reject(new Error('Grade submission timeout')):setTimeout(check,30);check();})`);
+        const grade=await evaluate(`window.__smokeGrade`);
+        assert(grade.authValid && grade.profileValid);
+        assert.equal(grade.payload.weight,1);
+        assert.equal(grade.payload.grade_origins[0].grade_origin,'4');
+        assert.equal(await evaluate(`document.querySelector('[data-test-component="markCell-2_100_200"]').parentElement.querySelector('.mesh-phantom-grade')===null`),true);
         await evaluate('drawRobotPanel(0); window.MeshTasks.open()');
         assert.equal(await evaluate(`document.getElementById('mesh-robot-panel').parentElement.id`), 'mesh-task-controls');
         await evaluate(`window.browserTask = window.MeshTasks.start({title:'Обновление КТП',total:12,cancellable:true}); browserTask.update({current:7,message:'КТП 8 из 12: пересчёт'});`);
@@ -110,13 +134,13 @@ const server = http.createServer((req, res) => {
         await send('Page.navigate', { url: base + '/popup.html' }, sessionId);
         await new Promise(resolve => setTimeout(resolve, 800));
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-popup.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
-        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.5');
+        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.5.1');
         assert.equal(await evaluate(`document.getElementById('absenceMonitorGroup').value`), 'ИСП2311');
         await evaluate(`document.getElementById('absenceMonitorEnabled').scrollIntoView({block:'center'})`);
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-monitor-settings.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
 
         assert.deepEqual(errors, []);
-        console.log(JSON.stringify({ browser: 'Google Chrome headless', allContentScripts: scripts.length, timer: bounds, routeCleanup: true, taskCenter: true, excelWorkbook: true, popup: true, errors, screenshots: [path.join(os.tmpdir(), 'speedmesh-journal.png'), path.join(os.tmpdir(), 'speedmesh-popup.png')] }, null, 2));
+        console.log(JSON.stringify({ browser: 'Google Chrome headless', allContentScripts: scripts.length, timer: bounds, routeCleanup: true, gradeSubmission: true, taskCenter: true, excelWorkbook: true, popup: true, errors, screenshots: [path.join(os.tmpdir(), 'speedmesh-journal.png'), path.join(os.tmpdir(), 'speedmesh-popup.png')] }, null, 2));
     } finally {
         await send('Browser.close').catch(() => {});
         server.close();
