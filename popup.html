@@ -127,6 +127,17 @@
  <div class="card" style="--accent: #f43f5e;"><div class="card-header"><div class="card-title"> Фиксация итогов</div><label class="switch"><input type="checkbox" id="stickyMode"><span class="slider"></span></label></div></div>
 
  <div class="card" style="--accent: #06b6d4;"><div class="card-header"><div class="card-title"> Радар пропусков</div><label class="switch"><input type="checkbox" id="calcAttendance"><span class="slider"></span></label></div></div>
+ <div class="card" style="--accent:#f59e0b;">
+ <div class="card-header"><div class="card-title">Монитор «н» группы</div><label class="switch"><input type="checkbox" id="absenceMonitorEnabled"><span class="slider"></span></label></div>
+ <div class="input-group">
+ <label for="absenceMonitorGroup">Кураторская группа</label>
+ <input id="absenceMonitorGroup" class="premium-input" value="ИСП2311" maxlength="60" placeholder="Например, ИСП2311">
+ <label for="absenceMonitorMinutes">Проверять</label>
+ <select id="absenceMonitorMinutes" class="premium-input"><option value="1">Каждую минуту</option><option value="2">Раз в 2 минуты</option><option value="5">Раз в 5 минут</option><option value="10">Раз в 10 минут</option></select>
+ <button id="absenceMonitorCheck" class="top-btn">Проверить сейчас</button>
+ <div id="absenceMonitorStatus" role="status" style="font-size:11px;color:var(--text-muted);line-height:1.5;">Загрузка настроек…</div>
+ <small style="color:var(--text-muted);font-size:10px;">Нужна открытая вкладка МЭШ. Первая проверка запоминает текущие «н». Новые пропуски за сегодня приходят без звука.</small>
+ </div></div>
  <div class="card" style="--accent: #6366f1;"><div class="card-header"><div class="card-title"> Ассистент КТП</div><label class="switch"><input type="checkbox" id="ktpModule"><span class="slider"></span></label></div></div>
 
  <div class="section-title">Аналитика</div>

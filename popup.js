@@ -3,6 +3,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const badge = document.querySelector('.version-badge');
     if (badge) badge.textContent = 'v' + chrome.runtime.getManifest().version;
 
+    const monitorEnabled = document.getElementById('absenceMonitorEnabled');
+    const monitorGroup = document.getElementById('absenceMonitorGroup');
+    const monitorMinutes = document.getElementById('absenceMonitorMinutes');
+    const monitorButton = document.getElementById('absenceMonitorCheck');
+    const monitorStatus = document.getElementById('absenceMonitorStatus');
+    function renderMonitor(result) {
+        if (!result?.settings) return;
+        monitorEnabled.checked = result.settings.enabled;
+        monitorGroup.value = result.settings.groupName;
+        monitorMinutes.value = String(result.settings.minutes);
+        const state = result.state || {};
+        monitorStatus.textContent = !result.settings.enabled ? 'Монитор выключен.' : state.error ? state.error : state.checkedAt
+            ? `Проверено: ${new Date(state.checkedAt).toLocaleTimeString('ru-RU')}. Сегодня «н»: ${state.count}.`
+            : 'Ожидание первой проверки. Текущие пропуски будут запомнены без уведомления.';
+    }
+    async function monitorRequest(action, settings) {
+        const elements = [monitorEnabled, monitorGroup, monitorMinutes, monitorButton];
+        elements.forEach(el => { el.disabled = true; });
+        try {
+            const result = await chrome.runtime.sendMessage({ action, settings });
+            if (!result?.ok) throw new Error(result?.error || 'Нет ответа расширения');
+            renderMonitor(result);
+        } catch (error) { monitorStatus.textContent = error.message; }
+        finally { elements.forEach(el => { el.disabled = false; }); }
+    }
+    monitorRequest('getAbsenceMonitor');
+    const saveMonitor = () => monitorRequest('setAbsenceMonitor', { enabled: monitorEnabled.checked, groupName: monitorGroup.value.trim(), minutes: Number(monitorMinutes.value) });
+    [monitorEnabled, monitorGroup, monitorMinutes].forEach(el => el.addEventListener('change', saveMonitor));
+    monitorButton.addEventListener('click', () => monitorRequest('checkAbsenceMonitor'));
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.meshAbsenceMonitorState?.newValue) renderMonitor({ settings: { enabled: monitorEnabled.checked, groupName: monitorGroup.value, minutes: Number(monitorMinutes.value) }, state: changes.meshAbsenceMonitorState.newValue });
+    });
+
     const cleanupSelect = document.getElementById('cookieCleanupHours');
     const cleanupButton = document.getElementById('clearMeshCookies');
     const cleanupStatus = document.getElementById('cookieCleanupStatus');

@@ -25,7 +25,7 @@ const send = (method, params = {}, sessionId) => new Promise((resolve, reject) =
     const id = ++nextId; pending.set(id, { resolve, reject });
     chrome.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
 });
-const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{getURL:file=>'/'+file,getManifest:()=>({version:'3.4'}),onMessage:{addListener:()=>{}},sendMessage:async()=>({ok:true,hours:24,nextAt:Date.now()+86400000})},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
+const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{id:'smoke',getURL:file=>'/'+file,getManifest:()=>({version:'3.5'}),onMessage:{addListener:fn=>(window.__smokeMessages??=[]).push(fn)},sendMessage:async(message)=>message.action.includes('AbsenceMonitor')?{ok:true,settings:{enabled:true,groupName:'ИСП2311',minutes:1},state:{}}:{ok:true,hours:24,nextAt:Date.now()+86400000}},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
 const manifest = JSON.parse(fs.readFileSync('manifest.json'));
 const scripts = manifest.content_scripts.flatMap(group => group.js);
 const server = http.createServer((req, res) => {
@@ -60,6 +60,12 @@ const server = http.createServer((req, res) => {
         assert.equal(await evaluate(`document.getElementById('mesh-robot-panel').parentElement.id`), 'mesh-task-controls');
         await evaluate(`window.browserTask = window.MeshTasks.start({title:'Обновление КТП',total:12,cancellable:true}); browserTask.update({current:7,message:'КТП 8 из 12: пересчёт'});`);
         assert.equal(await evaluate(`document.querySelector('.mesh-task-row progress').value`), 7);
+        await evaluate(`window.__smokeMessages.forEach(fn=>fn({action:'showAbsenceNotice',title:'Новые «н» · ИСП2311',message:'Иванов Иван — «н»'},{id:'smoke'},result=>window.__miniResult=result))`);
+        assert.equal(await evaluate(`window.__miniResult.shown`), true);
+        assert.equal(await evaluate(`document.getElementById('mesh-absence-notice').getAttribute('role')`), 'status');
+        fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-absence-notice.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
+        await evaluate(`document.querySelector('#mesh-absence-notice button').click()`);
+
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-journal.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
         await evaluate(`history.pushState({},'', '/schedule')`);
         await new Promise(resolve => setTimeout(resolve, 650));
@@ -104,7 +110,11 @@ const server = http.createServer((req, res) => {
         await send('Page.navigate', { url: base + '/popup.html' }, sessionId);
         await new Promise(resolve => setTimeout(resolve, 800));
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-popup.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
-        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.4');
+        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.5');
+        assert.equal(await evaluate(`document.getElementById('absenceMonitorGroup').value`), 'ИСП2311');
+        await evaluate(`document.getElementById('absenceMonitorEnabled').scrollIntoView({block:'center'})`);
+        fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-monitor-settings.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
+
         assert.deepEqual(errors, []);
         console.log(JSON.stringify({ browser: 'Google Chrome headless', allContentScripts: scripts.length, timer: bounds, routeCleanup: true, taskCenter: true, excelWorkbook: true, popup: true, errors, screenshots: [path.join(os.tmpdir(), 'speedmesh-journal.png'), path.join(os.tmpdir(), 'speedmesh-popup.png')] }, null, 2));
     } finally {
