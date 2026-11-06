@@ -399,3 +399,59 @@ test('a confirmed grade in a nested markCell cannot be selected for a duplicate 
     assert.equal(cell.querySelector('.mesh-phantom-grade'), null);
     assert.equal(cell.hasAttribute('data-robot-target-grade'), false);
 });
+
+test('MESH Нет оценок export is an empty journal, while an unknown XLSX remains an error', async t => {
+    const s = setup(t), api = summary(s);
+    const empty = await workbook(`<row r="1">${str('A1', 'Нет оценок')}</row>`);
+    assert.equal((await api.parseJournalXlsx(empty)).length, 0);
+    const unknown = await workbook(`<row r="1">${str('A1', 'Сервис временно недоступен')}</row>`);
+    await assert.rejects(api.parseJournalXlsx(unknown), /Не удалось распознать/);
+});
+
+test('repeated printed rosters merge lesson marks and never use absence totals as grades', async t => {
+    const s = setup(t), api = summary(s);
+    const bytes = await workbook(
+        `<row r="1">${str('A1', '№')}${str('B1', 'Студент')}${str('C1', 'сен')}${str('E1', 'н')}${str('G1', 'Дата')}${str('H1', 'Тема')}</row>` +
+        `<row r="2">${num('C2', 7)}${num('D2', 7)}${num('E2', 2)}</row>` +
+        `<row r="3">${num('A3', 1)}${str('B3', 'Иванов Иван')}${num('C3', 5)}${num('D3', 4)}${num('E3', 2)}${num('F3', 5)}</row>` +
+        `<row r="4">${num('A4', 2)}${str('B4', 'Петров Петр')}${str('C4', 'н')}${str('D4', 'н')}${num('E4', 4)}</row>` +
+        `<row r="51">${str('A51', '№')}${str('B51', 'Студент')}${str('C51', 'н')}${str('G51', 'Дата')}${str('H51', 'Тема')}</row>` +
+        `<row r="53">${num('A53', 1)}${str('B53', 'Иванов Иван')}${num('C53', 3)}${num('D53', 2)}</row>` +
+        `<row r="54">${num('A54', 2)}${str('B54', 'Петров Петр')}${num('C54', 2)}</row>` +
+        `<row r="101">${str('A101', '№')}${str('B101', 'Студент')}${str('C101', 'ноя')}${str('E101', 'н')}</row>` +
+        `<row r="103">${num('A103', 1)}${str('B103', 'Иванов Иван')}${num('C103', 3)}${num('E103', 5)}</row>`
+    );
+    const parsed = await api.parseJournalXlsx(bytes);
+    assert.equal(parsed.length, 2);
+    const ivan = parsed.find(student => student.name === 'Иванов Иван');
+    const petr = parsed.find(student => student.name === 'Петров Петр');
+    assert.equal(ivan.marksCount, 3); assert.equal(ivan.avg, 4);
+    assert.equal(petr.marksCount, 0); assert.equal(petr.avg, null);
+});
+
+test('empty disciplines do not block summary and stay visible as unknown values', async t => {
+    const s = setup(t); s.load('task_center.js'); const api = summary(s);
+    const good = await workbook(`<row r="1">${str('A1', 'Иванов Иван')}${num('B1', 5)}</row>`);
+    const empty = await workbook(`<row r="1">${str('A1', 'Нет оценок')}</row>`);
+    s.w.fetch = async url => ({ ok: true, blob: async () => url.includes('group_ids=1') ? good : empty });
+    const task = s.w.MeshTasks.start({ title: 'Сводная ведомость' });
+    const pending = api.buildAndShowSummarySheet([{ id: 1, name: 'ИСП2311 ОС' }, { id: 2, name: 'ИСП2311 Практика' }], null, undefined, task);
+    await s.flush(30); await pending;
+    const modal = s.w.document.getElementById('speedmesh-summary-modal'); assert(modal);
+    assert(modal.querySelector('details').textContent.includes('ИСП2311 Практика'));
+    assert(modal.querySelector('#mesh-summary-tbody').textContent.includes('Нет данных'));
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'done');
+    assert(s.w.document.querySelector('.mesh-task-message').textContent.includes('Без оценок: 1'));
+});
+
+test('all-empty MESH journals explain that no marks are available without a parsing failure', async t => {
+    const s = setup(t); s.load('task_center.js'); const api = summary(s);
+    const empty = await workbook(`<row r="1">${str('A1', 'Нет оценок')}</row>`);
+    s.w.fetch = async () => ({ ok: true, blob: async () => empty });
+    const task = s.w.MeshTasks.start({ title: 'Сводная ведомость' });
+    const pending = api.buildAndShowSummarySheet([{ id: 1, name: 'ИСП2311 Практика' }], null, undefined, task);
+    await s.flush(20); await pending;
+    assert.equal(s.w.document.querySelector('.mesh-task-row').dataset.status, 'done');
+    assert(s.w.document.getElementById('speedmesh-toast-notify').textContent.includes('пока нет оценок'));
+    assert.equal(s.w.document.getElementById('speedmesh-summary-modal'), null);
+});

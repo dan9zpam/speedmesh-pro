@@ -438,109 +438,69 @@
         const sheetDoc = new DOMParser().parseFromString(sheetText, 'application/xml');
         const rowNodes = sheetDoc.getElementsByTagName('row');
 
-        // Поиск границы между сеткой оценок и тематическим планом ("Дата", "Тема", "Домашнее задание")
-        let metadataCutoffIndex = Infinity;
-        const summaryColumns = new Set();
         function readCell(cell) {
             const type = cell.getAttribute('t');
             if (type === 'inlineStr') return cell.getElementsByTagName('is')[0]?.textContent.trim() || '';
             const value = cell.getElementsByTagName('v')[0]?.textContent.trim() || '';
             return type === 's' ? sharedStrings[Number(value)] || '' : value;
         }
-        const metaKeywords = ['дата', 'тема', 'домашнее задание', 'тема урока', 'дз'];
+        const rows = Array.from(rowNodes, node => Array.from(node.getElementsByTagName('c'), cell => ({
+            col: colToIndex((cell.getAttribute('r') || '').match(/^([A-Z]+)/)?.[1] || ''),
+            val: readCell(cell).replace(/\s+/g, ' ').trim()
+        })));
+        const textCells = rows.flat().filter(cell => cell.val);
+        // MESH exports an ordinary XLSX with this single message when a journal has no marks.
+        if (textCells.length === 1 && /^(нет оценок|нет данных|оценки отсутствуют|данные отсутствуют)$/i.test(textCells[0].val)) return [];
 
-        for (let r = 0; r < Math.min(rowNodes.length, 5); r++) {
-            const cellNodes = rowNodes[r].getElementsByTagName('c');
-            for (let c = 0; c < cellNodes.length; c++) {
-                const cell = cellNodes[c];
-                const ref = cell.getAttribute('r') || '';
-                const low = readCell(cell).trim().toLowerCase();
-                const headerColumn = ref.match(/^([A-Z]+)/)?.[1];
-                if (headerColumn && /средн|итог|аттест|экзамен|зач[её]т|количество|пропуск/.test(low)) {
-                    summaryColumns.add(colToIndex(headerColumn));
+        const isNameHeader = value => /^(фио(?:обучающегося|студента|ученика)?|студент|обучающийся|ученик|фамилияимяотчество)$/i.test(value.replace(/[\s.]/g, ''));
+        let cutoff = Infinity;
+        let excluded = new Set();
+        let nameColumn = null;
+        const byStudent = new Map();
+        for (const cells of rows) {
+            const nameHeader = cells.find(cell => isNameHeader(cell.val));
+            if (nameHeader) {
+                // Printed exports repeat the roster with a new set of lesson columns.
+                // Rebuild the boundaries for each block: totals move between blocks.
+                nameColumn = nameHeader.col;
+                cutoff = Infinity;
+                excluded = new Set();
+                for (const cell of cells) {
+                    const low = cell.val.toLowerCase();
+                    if (cell.col <= nameColumn) continue;
+                    if (/^(дата|тема|тема урока|домашнее задание|дз|н|пропуски|пропусков)$/.test(low)) cutoff = Math.min(cutoff, cell.col);
+                    if (/средн|итог|аттест|экзамен|зач[её]т|количество|пропуск|^ср\.?$|^н$/.test(low)) excluded.add(cell.col);
                 }
-                if (metaKeywords.some(k => low === k || low.startsWith(k))) {
-                    const colMatch = ref.match(/^([A-Z]+)/);
-                    if (colMatch) {
-                        const colIdx = colToIndex(colMatch[1]);
-                        if (colIdx < metadataCutoffIndex) {
-                            metadataCutoffIndex = colIdx;
-                        }
-                    }
+                continue;
+            }
+            if (nameColumn === null && cells.length < 2) continue;
+            const visible = cells.filter(cell => cell.col < cutoff && !excluded.has(cell.col));
+            const candidate = nameColumn === null
+                ? visible.slice(0, 5).find(cell => isStudentName(cell.val))
+                : visible.find(cell => cell.col === nameColumn && isStudentName(cell.val));
+            if (!candidate) continue;
+            let student = byStudent.get(candidate.val);
+            if (!student) {
+                student = { name: candidate.val, sum: 0, marksCount: 0 };
+                byStudent.set(candidate.val, student);
+            }
+            for (const cell of visible) {
+                if (cell.col <= candidate.col) continue;
+                const value = cell.val.replace(',', '.');
+                if (!value || /^\d{1,2}\.\d{1,2}(\.\d{2,4})?$/.test(value)) continue;
+                for (const part of value.split('/')) {
+                    if (!/^[2-5]$/.test(part.trim())) continue;
+                    student.sum += Number(part.trim());
+                    student.marksCount++;
                 }
             }
         }
-
-        const students = [];
-
-        for (let r = 0; r < rowNodes.length; r++) {
-            const rowNode = rowNodes[r];
-            const cellNodes = rowNode.getElementsByTagName('c');
-            if (cellNodes.length < 2) continue;
-
-            let rowCells = [];
-            for (let c = 0; c < cellNodes.length; c++) {
-                const cell = cellNodes[c];
-                const ref = cell.getAttribute('r') || '';
-                const val = readCell(cell);
-                const colMatch = ref.match(/^([A-Z]+)/);
-                const colLetter = colMatch ? colMatch[1] : '';
-                const colIdx = colToIndex(colLetter);
-
-                // Отсекаем колонки календарно-тематического плана (U, V, W и далее)
-                if (colIdx >= metadataCutoffIndex || summaryColumns.has(colIdx)) continue;
-
-                rowCells.push({ col: colLetter, colIdx, val });
-            }
-
-            let studentName = null;
-            let nameColIdx = -1;
-            for (let i = 0; i < Math.min(rowCells.length, 5); i++) {
-                const candidate = rowCells[i].val.replace(/\s+/g, ' ').trim();
-                if (isStudentName(candidate)) {
-                    studentName = candidate;
-                    nameColIdx = i;
-                    break;
-                }
-            }
-            if (!studentName) continue;
-
-            // Только ячейки с оценками после имени студента
-            const afterCells = rowCells.slice(nameColIdx + 1);
-            let marks = [];
-
-            for (let cell of afterCells) {
-                let str = cell.val.replace(',', '.').trim();
-                if (!str) continue;
-
-                // Игнорируем даты (например 01.10, 15.09) и пропуски (н, у, п, б, о)
-                if (/^\d{1,2}\.\d{1,2}(\.\d{2,4})?$/.test(str)) continue;
-
-                // Двойные оценки (например 5/4 или 4/5)
-                if (str.includes('/')) {
-                    const parts = str.split('/');
-                    for (let p of parts) {
-                        if (/^[2-5]$/.test(p.trim())) marks.push(Number(p.trim()));
-                    }
-                    continue;
-                }
-
-                if (/^[2-5]$/.test(str)) marks.push(Number(str));
-            }
-
-            // Средний балл считается строго по реальным оценкам за уроки (от 2.00 до 5.00)
-            let avg = (marks.length > 0)
-                ? parseFloat((marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(2))
-                : null;
-
-            students.push({
-                name: studentName,
-                avg: avg,
-                marksCount: marks.length
-            });
-        }
-
-        return students;
+        if (!byStudent.size) throw new Error('Не удалось распознать строки обучающихся в XLSX');
+        return Array.from(byStudent.values(), student => ({
+            name: student.name,
+            avg: student.marksCount ? Number((student.sum / student.marksCount).toFixed(2)) : null,
+            marksCount: student.marksCount
+        }));
     }
 
     async function buildAndShowSummarySheet(groups, triggerBtn, authCtx, task) {
@@ -559,6 +519,7 @@
         // Fetch a fresh snapshot: cached exports may predate changed marks or dates.
         window._meshDownloadedBlobs = new Map();
         const failedJournals = [];
+        const emptyJournals = [];
 
         task?.update({ total: groups.length * 2 });
         const stopIfCancelled = () => {
@@ -613,7 +574,7 @@
             const safeName = item.name;
             try {
                 const parsedStudents = await parseJournalXlsx(item.blob);
-                if (!parsedStudents.length) throw new Error('Не найдены строки обучающихся');
+                if (!parsedStudents.length) emptyJournals.push(safeName);
                 subjectsList.push(safeName);
                 for (let ps of parsedStudents) {
                     if (!studentMap.has(ps.name)) {
@@ -639,6 +600,11 @@
             return;
         }
 
+        if (studentMap.size === 0 && emptyJournals.length === subjectsList.length) {
+            task?.finish('done', 'В выбранных журналах пока нет оценок.');
+            showMeshToast('В выбранных журналах МЭШ пока нет оценок.');
+            return;
+        }
         if (studentMap.size === 0) {
             task?.finish('error', 'В журналах не найдены данные обучающихся.');
             showMeshToast("Не удалось извлечь данные обучающихся из выгруженных журналов.", "error");
@@ -683,13 +649,13 @@
         });
 
         if (stopIfCancelled()) return;
-        task?.finish('done', `Студентов: ${processedStudents.length}. Дисциплин: ${subjectsList.length}.`);
-        task?.action('Открыть ведомость', () => renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr));
+        task?.finish('done', `Студентов: ${processedStudents.length}. Дисциплин: ${subjectsList.length}. Без оценок: ${emptyJournals.length}.`);
+        task?.action('Открыть ведомость', () => renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr, emptyJournals));
         // 4. Отрисовка модального окна сводной ведомости
-        renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr);
+        renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, processedStudents, todayRuStr, todayStr, emptyJournals);
     }
 
-    function renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, students, todayRuStr, todayStr) {
+    function renderSummaryModalUI(courseName, yearStart, yearEnd, subjectsList, students, todayRuStr, todayStr, emptyJournals = []) {
         let existing = document.getElementById('speedmesh-summary-modal');
         if (existing) existing.remove();
 
@@ -764,6 +730,10 @@
                     <button id="mesh-close-summary-btn" style="background:transparent; border:none; color:#94a3b8; font-size:26px; cursor:pointer; padding:0 6px; line-height:1;">&times;</button>
                 </div>
 
+                ${emptyJournals.length ? `<details style="padding:10px 24px;background:#172033;color:#cbd5e1;border-bottom:1px solid #334155;font-size:12px;">
+                    <summary style="cursor:pointer;">Дисциплин с выгрузкой «Нет оценок»: ${emptyJournals.length}. В таблице стоят прочерки.</summary>
+                    <div style="padding-top:8px;max-height:100px;overflow:auto;">${emptyJournals.map(name => escapeSummaryHtml(name)).join('<br>')}</div>
+                </details>` : ''}
                 <div style="padding:12px 24px; background:#111827; border-bottom:1px solid #1e293b; display:grid; grid-template-columns:repeat(5, 1fr); gap:12px;">
                     <div style="background:#1e293b; border:1px solid #334155; border-radius:10px; padding:10px; text-align:center;">
                         <div style="font-size:11px; color:#94a3b8; text-transform:uppercase;">Всего студентов</div>

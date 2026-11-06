@@ -25,7 +25,7 @@ const send = (method, params = {}, sessionId) => new Promise((resolve, reject) =
     const id = ++nextId; pending.set(id, { resolve, reject });
     chrome.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0');
 });
-const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{id:'smoke',getURL:file=>'/'+file,getManifest:()=>({version:'3.5.1'}),onMessage:{addListener:fn=>(window.__smokeMessages??=[]).push(fn)},sendMessage:async(message)=>message.action.includes('AbsenceMonitor')?{ok:true,settings:{enabled:true,groupName:'ИСП2311',minutes:1},state:{}}:{ok:true,hours:24,nextAt:Date.now()+86400000}},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
+const stub = `window.chrome={storage:{sync:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},local:{get:(keys,cb)=>cb({}),set:(d,cb)=>cb?.()},onChanged:{addListener:()=>{}}},runtime:{id:'smoke',getURL:file=>'/'+file,getManifest:()=>({version:'3.5.2'}),onMessage:{addListener:fn=>(window.__smokeMessages??=[]).push(fn)},sendMessage:async(message)=>message.action.includes('AbsenceMonitor')?{ok:true,settings:{enabled:true,groupName:'ИСП2311',minutes:1},state:{}}:{ok:true,hours:24,nextAt:Date.now()+86400000}},tabs:{query:(q,cb)=>cb([]),create:()=>{},sendMessage:()=>{}}};window.fetch=async()=>new Response('[]',{headers:{'Content-Type':'application/json'}});`;
 const manifest = JSON.parse(fs.readFileSync('manifest.json'));
 const scripts = manifest.content_scripts.flatMap(group => group.js);
 const server = http.createServer((req, res) => {
@@ -102,10 +102,13 @@ const server = http.createServer((req, res) => {
         await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: profile }, undefined);
         await evaluate(`(async()=>{
             const zip=new JSZip();
-            zip.file('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Иванов Иван</t></is></c><c r="B1"><v>5</v></c><c r="C1"><v>4</v></c></row></sheetData></worksheet>');
+            zip.file('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Студент</t></is></c><c r="B1" t="inlineStr"><is><t>сен</t></is></c><c r="D1" t="inlineStr"><is><t>н</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Иванов Иван</t></is></c><c r="B2"><v>5</v></c><c r="C2"><v>4</v></c><c r="D2"><v>2</v></c></row><row r="51"><c r="A51" t="inlineStr"><is><t>Студент</t></is></c><c r="B51" t="inlineStr"><is><t>н</t></is></c></row><row r="52"><c r="A52" t="inlineStr"><is><t>Иванов Иван</t></is></c><c r="B52"><v>2</v></c></row></sheetData></worksheet>');
             const bytes=await zip.generateAsync({type:'uint8array'});
-            sessionStorage.setItem('MESH_MENTOR_GROUPS',JSON.stringify([{id:1,name:'ИСП2311 ОС'}]));
-            window.fetch=async()=>new Response(bytes);
+            const emptyZip=new JSZip();
+            emptyZip.file('xl/worksheets/sheet1.xml','<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Нет оценок</t></is></c></row></sheetData></worksheet>');
+            const emptyBytes=await emptyZip.generateAsync({type:'uint8array'});
+            sessionStorage.setItem('MESH_MENTOR_GROUPS',JSON.stringify([{id:1,name:'ИСП2311 ОС'},{id:2,name:'ИСП2311 Практика'}]));
+            window.fetch=async(url)=>new Response(String(url).includes('group_ids=2')?emptyBytes:bytes);
             window.dispatchEvent(new Event('speedmesh:buildSummarySheet'));
         })()`);
         await evaluate(`new Promise((resolve,reject)=>{
@@ -114,6 +117,8 @@ const server = http.createServer((req, res) => {
         })`);
         const modalOnTop = await evaluate(`(()=>{const r=document.querySelector('#mesh-summary-export-xlsx').getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.id;})()`);
         assert.equal(modalOnTop, 'mesh-summary-export-xlsx');
+        assert.equal(await evaluate(`document.querySelectorAll('#mesh-summary-tbody tr').length`),1);
+        assert.equal(await evaluate(`document.querySelector('#speedmesh-summary-modal details').textContent.includes('ИСП2311 Практика')`),true);
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-summary.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
         await evaluate(`document.querySelector('#mesh-summary-export-xlsx').click()`);
         await evaluate(`new Promise((resolve,reject)=>{
@@ -134,7 +139,7 @@ const server = http.createServer((req, res) => {
         await send('Page.navigate', { url: base + '/popup.html' }, sessionId);
         await new Promise(resolve => setTimeout(resolve, 800));
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-popup.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
-        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.5.1');
+        assert.equal(await evaluate(`document.querySelector('.version-badge').textContent`), 'v3.5.2');
         assert.equal(await evaluate(`document.getElementById('absenceMonitorGroup').value`), 'ИСП2311');
         await evaluate(`document.getElementById('absenceMonitorEnabled').scrollIntoView({block:'center'})`);
         fs.writeFileSync(path.join(os.tmpdir(), 'speedmesh-monitor-settings.png'), Buffer.from((await send('Page.captureScreenshot', {}, sessionId)).data, 'base64'));
