@@ -5,6 +5,7 @@
     console.log("🛠️ MESH Architect v2.1: Менеджер стилей загружен");
 
     let isActive = false;
+    let isPaused = false;
     let hoveredEl = null;
     let rules = {}; 
     let overlay = null;
@@ -22,18 +23,46 @@
         applyRules(); // Применяем правила сразу после загрузки
     } catch(e) {}
 
-    // Функция сохранения и применения правил
-    async function saveRules() {
+    // Применяет и сохраняет точный снимок правил без возврата удаленных ключей
+    async function persistRules(nextRules) {
+        rules = { ...nextRules };
+        localStorage.setItem('MESH_ARCHITECT_RULES', JSON.stringify(rules));
+        try {
+            await chrome.storage.local.set({ 'MESH_ARCHITECT_RULES': rules });
+        } catch(e) {}
+        applyRules();
+        if (isActive) renderManagerPanel();
+    }
+
+    // Добавляет или обновляет одно правило, подтягивая актуальные правила из storage
+    async function upsertRule(sel, ruleData) {
+        let merged = { ...rules };
         try {
             const result = await chrome.storage.local.get(['MESH_ARCHITECT_RULES']);
-            if (result.MESH_ARCHITECT_RULES) {
-                rules = { ...result.MESH_ARCHITECT_RULES, ...rules };
+            if (result && result.MESH_ARCHITECT_RULES) {
+                merged = { ...result.MESH_ARCHITECT_RULES, ...merged };
             }
         } catch(e) {}
-        localStorage.setItem('MESH_ARCHITECT_RULES', JSON.stringify(rules));
-        await chrome.storage.local.set({ 'MESH_ARCHITECT_RULES': rules });
-        applyRules();
-        if (isActive) renderManagerPanel(); 
+        merged[sel] = ruleData;
+        await persistRules(merged);
+    }
+
+    // Удаляет конкретное правило без восстановления из storage
+    async function removeRule(sel) {
+        let current = { ...rules };
+        try {
+            const result = await chrome.storage.local.get(['MESH_ARCHITECT_RULES']);
+            if (result && result.MESH_ARCHITECT_RULES) {
+                current = { ...result.MESH_ARCHITECT_RULES, ...current };
+            }
+        } catch(e) {}
+        delete current[sel];
+        await persistRules(current);
+    }
+
+    // Полностью сбрасывает все изменения дизайна
+    async function clearAllRules() {
+        await persistRules({});
     }
 
     // Генератор уникального CSS-селектора для элемента
@@ -77,7 +106,16 @@
         toolbar = document.createElement('div');
         toolbar.id = 'mesh-architect-toolbar';
         toolbar.style.cssText = 'position:fixed; background:#2c3e50; padding:10px; border-radius:8px; display:none; z-index:9999999; box-shadow:0 8px 25px rgba(0,0,0,0.6); gap:10px; align-items:center; border: 1px solid #34495e;';
+        ['mousedown', 'pointerdown'].forEach(evt => toolbar.addEventListener(evt, e => e.stopPropagation()));
         document.body.appendChild(toolbar);
+    }
+
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
     }
 
     // Отрисовка боковой панели Менеджера
@@ -88,14 +126,20 @@
             panel = document.createElement('div');
             panel.id = 'mesh-architect-manager';
             panel.style.cssText = 'position:fixed; top:80px; right:20px; width:280px; background:rgba(20, 25, 30, 0.65); backdrop-filter: blur(16px); border:1px solid rgba(255,255,255,0.15); border-radius:16px; padding:15px; color:white; z-index:9999999; font-family:sans-serif; box-shadow:0 10px 30px rgba(0,0,0,0.5); transition: 0.3s;';
+            ['mousedown', 'pointerdown'].forEach(evt => panel.addEventListener(evt, e => e.stopPropagation()));
             document.body.appendChild(panel);
         }
 
+        const pauseBtnBg = isPaused ? '#e67e22' : '#34495e';
+        const pauseBtnText = isPaused ? '🎯 Выбирать блоки' : '⏸️ Пауза (клик по сайту)';
+
         let html = `
-            <div style="font-weight:bold; color:#e67e22; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-weight:bold; color:#e67e22; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
                 <span style="font-size:14px;">🛠️ Менеджер</span>
                 <span style="background:#e74c3c; border-radius:6px; padding:4px 8px; font-size:10px; cursor:pointer; font-weight:bold; transition:0.2s;" id="mesh-arch-clear-all" onmouseover="this.style.background='#c0392b'" onmouseout="this.style.background='#e74c3c'">Сбросить всё</span>
             </div>
+            <button id="mesh-arch-pause" style="width:100%; background:${pauseBtnBg}; color:white; border:1px solid rgba(255,255,255,0.15); padding:8px 10px; border-radius:6px; cursor:pointer; font-weight:bold; font-size:12px; margin-bottom:8px; transition:0.2s;">${pauseBtnText}</button>
+            <div style="font-size:11px; color:#95a5a6; margin-bottom:10px; line-height:1.35;">${isPaused ? 'Режим навигации: нажимайте кнопки и открывайте окна, затем верните выбор.' : 'Подсказка: удерживайте <b>Alt</b> (Option) или нажмите паузу, чтобы кликать по сайту.'}</div>
         `;
 
         if (Object.keys(rules).length === 0) {
@@ -105,16 +149,17 @@
             for (let sel in rules) {
                 let rule = rules[sel];
                 let desc = rule.hide ? 'Скрыто 👁️‍🗨️' : 'Цвет фона 🎨';
-                let colorIndicator = rule.bg ? `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${rule.bg}; margin-left:5px;"></span>` : '';
+                let colorIndicator = rule.bg ? `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${escapeHtml(rule.bg)}; margin-left:5px;"></span>` : '';
                 let shortSel = sel.length > 25 ? sel.substring(0, 25) + '...' : sel;
+                let safeSel = escapeHtml(sel);
                 
                 html += `
                     <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px 10px; border-radius:6px; border-left: 3px solid ${rule.hide ? '#e74c3c' : '#3498db'};">
-                        <div style="display:flex; flex-direction:column; overflow:hidden;" title="${sel}">
+                        <div style="display:flex; flex-direction:column; overflow:hidden;" title="${safeSel}">
                             <div style="color:#ecf0f1; font-weight:bold; display:flex; align-items:center;">${desc} ${colorIndicator}</div>
-                            <span style="color:#7f8c8d; font-size:10px; white-space:nowrap; margin-top:2px;">${shortSel}</span>
+                            <span style="color:#7f8c8d; font-size:10px; white-space:nowrap; margin-top:2px;">${escapeHtml(shortSel)}</span>
                         </div>
-                        <button class="mesh-arch-del-btn" data-sel="${sel}" style="background:transparent; color:#e74c3c; border:1px solid #e74c3c; border-radius:4px; width:26px; height:26px; cursor:pointer; font-weight:bold; transition:0.2s;" onmouseover="this.style.background='#e74c3c'; this.style.color='white';" onmouseout="this.style.background='transparent'; this.style.color='#e74c3c';">×</button>
+                        <button class="mesh-arch-del-btn" data-sel="${safeSel}" style="background:transparent; color:#e74c3c; border:1px solid #e74c3c; border-radius:4px; width:26px; height:26px; cursor:pointer; font-weight:bold; transition:0.2s;" onmouseover="this.style.background='#e74c3c'; this.style.color='white';" onmouseout="this.style.background='transparent'; this.style.color='#e74c3c';">×</button>
                     </div>
                 `;
             }
@@ -126,15 +171,24 @@
 
         panel.innerHTML = html;
 
+        document.getElementById('mesh-arch-pause').onclick = () => {
+            isPaused = !isPaused;
+            if (isPaused) {
+                if (overlay) overlay.style.display = 'none';
+                if (toolbar) toolbar.style.display = 'none';
+                hoveredEl = null;
+            }
+            renderManagerPanel();
+        };
+
         document.getElementById('mesh-arch-clear-all').onclick = () => {
-            if (confirm("Точно удалить ВСЕ изменения дизайна?")) { rules = {}; saveRules(); }
+            if (confirm("Точно удалить ВСЕ изменения дизайна?")) { clearAllRules(); }
         };
 
         panel.querySelectorAll('.mesh-arch-del-btn').forEach(btn => {
             btn.onclick = (e) => {
-                let s = e.target.getAttribute('data-sel');
-                delete rules[s];
-                saveRules();
+                let s = e.currentTarget.getAttribute('data-sel');
+                if (s !== null) removeRule(s);
             };
         });
 
@@ -150,6 +204,11 @@
     // ЛОГИКА ВЫДЕЛЕНИЯ И КЛИКОВ
     function mouseMoveHandler(e) {
         if (!isActive || !overlay) return;
+        if (isPaused || e.altKey) {
+            overlay.style.display = 'none';
+            hoveredEl = null;
+            return;
+        }
         const target = e.target;
         
         if (target.closest('#mesh-architect-manager') || target.closest('#mesh-architect-toolbar') || target.closest('#mesh-robot-panel') || target.closest('#mesh-spy-panel')) {
@@ -166,14 +225,15 @@
     }
 
     function clickHandler(e) {
-        if (!isActive || !toolbar) return;
+        if (!isActive || !toolbar || isPaused || e.altKey) return;
         if (e.target.closest('#mesh-architect-manager') || e.target.closest('#mesh-architect-toolbar') || e.target.closest('#mesh-robot-panel') || e.target.closest('#mesh-spy-panel')) return;
         
         e.preventDefault();
         e.stopPropagation();
 
-        if (hoveredEl) {
-            const sel = getCssSelector(hoveredEl);
+        const targetEl = hoveredEl || e.target;
+        if (targetEl) {
+            const sel = getCssSelector(targetEl);
             toolbar.style.left = Math.min(e.clientX, window.innerWidth - 250) + 'px';
             toolbar.style.top = Math.min(e.clientY, window.innerHeight - 60) + 'px';
             toolbar.style.display = 'flex';
@@ -187,8 +247,8 @@
                 <button id="mesh-arch-cancel" style="background:transparent; color:#bdc3c7; border:none; padding:8px; cursor:pointer; font-size:14px; transition:0.2s;" onmouseover="this.style.color='white'" onmouseout="this.style.color='#bdc3c7'">✖</button>
             `;
 
-            document.getElementById('mesh-arch-hide').onclick = () => { rules[sel] = { hide: true }; saveRules(); toolbar.style.display = 'none'; overlay.style.display = 'none'; };
-            document.getElementById('mesh-arch-bg').onchange = (ev) => { rules[sel] = { bg: ev.target.value }; saveRules(); toolbar.style.display = 'none'; overlay.style.display = 'none'; };
+            document.getElementById('mesh-arch-hide').onclick = () => { upsertRule(sel, { hide: true }); toolbar.style.display = 'none'; overlay.style.display = 'none'; };
+            document.getElementById('mesh-arch-bg').onchange = (ev) => { upsertRule(sel, { bg: ev.target.value }); toolbar.style.display = 'none'; overlay.style.display = 'none'; };
             document.getElementById('mesh-arch-cancel').onclick = () => { toolbar.style.display = 'none'; };
         }
     }
@@ -197,6 +257,7 @@
     function toggleArchitectMode(state) {
         isActive = state;
         if (isActive) {
+            isPaused = false;
             // Ждем, пока браузер отрисует body, прежде чем внедрять панели
             let ivl = setInterval(() => {
                 if (document.body) {
@@ -208,6 +269,7 @@
                 }
             }, 100);
         } else {
+            isPaused = false;
             document.removeEventListener('mousemove', mouseMoveHandler, true);
             document.removeEventListener('click', clickHandler, true);
             if (overlay) overlay.style.display = 'none';
@@ -222,9 +284,21 @@
         if (msg.action === "toggleArchitect") {
             toggleArchitectMode(msg.state);
         } else if (msg.action === "resetDesign") {
-            rules = {}; saveRules();
+            clearAllRules();
         }
     });
+
+    // Синхронизация правил между вкладками и фреймами
+    if (chrome.storage && chrome.storage.onChanged) {
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+            if (areaName === 'local' && changes.MESH_ARCHITECT_RULES) {
+                rules = changes.MESH_ARCHITECT_RULES.newValue ? { ...changes.MESH_ARCHITECT_RULES.newValue } : {};
+                localStorage.setItem('MESH_ARCHITECT_RULES', JSON.stringify(rules));
+                applyRules();
+                if (isActive) renderManagerPanel();
+            }
+        });
+    }
 
     // При загрузке страницы проверяем, был ли включен тумблер
     chrome.storage.sync.get(['architectMode'], (data) => {
