@@ -87,10 +87,11 @@
             targetColumns.forEach((col, index) => {
                 col.headers.forEach(h => {
                     const el = h.th;
+                    el.dataset.meshSticky = 'true';
                     el.style.setProperty('position', 'sticky', 'important');
                     el.style.setProperty('right', `${rightOffset}px`, 'important');
                     el.style.setProperty('z-index', '100', 'important');
-                    el.style.setProperty('background-color', getInheritedBackgroundColor(el), 'important');
+                    el.style.setProperty('background-color', `var(--mesh-sticky-header-bg, ${getInheritedBackgroundColor(el)})`, 'important');
                     el.style.setProperty('box-shadow', '-5px 0 10px rgba(0,0,0,0.05)', 'important');
                 });
 
@@ -100,10 +101,11 @@
                     
                     const targetTd = tds[tds.length - 1 - index];
                     if (targetTd) {
+                        targetTd.dataset.meshSticky = 'true';
                         targetTd.style.setProperty('position', 'sticky', 'important');
                         targetTd.style.setProperty('right', `${rightOffset}px`, 'important');
                         targetTd.style.setProperty('z-index', '99', 'important');
-                        targetTd.style.setProperty('background-color', getInheritedBackgroundColor(targetTd), 'important');
+                        targetTd.style.setProperty('background-color', `var(--mesh-sticky-bg, ${getInheritedBackgroundColor(targetTd)})`, 'important');
                     }
                 });
                 rightOffset += col.width;
@@ -113,10 +115,30 @@
 
     // Слушаем глобальную шину событий вместо setInterval
 
+    function unpinAverageColumns() {
+        document.querySelectorAll('[data-mesh-sticky="true"]').forEach(el => {
+            delete el.dataset.meshSticky;
+            el.style.removeProperty('position');
+            el.style.removeProperty('right');
+            el.style.removeProperty('z-index');
+            el.style.removeProperty('background-color');
+            el.style.removeProperty('box-shadow');
+        });
+    }
+
+    chrome.runtime.onMessage.addListener((req) => {
+        if (req.action === "updateSettings" && req.settings && req.settings.stickyMode !== undefined) {
+            if (req.settings.stickyMode !== false) pinAverageColumns();
+            else unpinAverageColumns();
+        }
+    });
+
     function initSticky() {
         chrome.storage.sync.get(['stickyMode'], (data) => {
             if (data.stickyMode !== false) {
                 pinAverageColumns();
+            } else {
+                unpinAverageColumns();
             }
         });
     }

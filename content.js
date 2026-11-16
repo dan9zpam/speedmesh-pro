@@ -77,6 +77,10 @@ chrome.runtime.onMessage.addListener((req) => {
     if (req.action === "updateSettings") {
         extSettings = { ...extSettings, ...req.settings };
         if (extSettings.autoGrader === false) { meshAbortProcess = true; removePhantomsAndPanel(); }
+        if (req.settings && req.settings.highlightGrades !== undefined) {
+            if (req.settings.highlightGrades) colorizeAverageGrades();
+            else clearColoredAverageGrades();
+        }
     }
     if (req.action === "rollbackData") {
         localStorage.removeItem('MESH_ACHIEVEMENTS_PRO');
@@ -237,6 +241,15 @@ function removePhantomsAndPanel() {
     isColumnPickerActive = false;
 }
 
+function clearColoredAverageGrades() {
+    document.querySelectorAll('[data-mesh-colored]').forEach(cell => {
+        delete cell.dataset.meshColored;
+        const target = cell.querySelector('div, span') || cell;
+        target.style.removeProperty('color');
+        target.style.removeProperty('font-weight');
+    });
+}
+
 function colorizeAverageGrades() {
     if (!extSettings.highlightGrades || !location.pathname.includes('/journal')) return;
     document.querySelectorAll('td, [role="cell"], [role="gridcell"]').forEach(cell => {
@@ -338,6 +351,7 @@ function isTotalColumn(td) {
 
 function isCellUnlocked(el) {
     let innerDiv = el.hasAttribute('data-test-component') ? el : el.querySelector('[data-test-component*="markCell"]');
+    if (el.getAttribute('data-mesh-dark-locked') === '1' || (innerDiv && innerDiv.getAttribute('data-mesh-dark-locked') === '1')) return false;
     if (innerDiv) {
         let disabledAttr = innerDiv.getAttribute('data-disabled-by');
         if (disabledAttr === 'NOT_DISABLED') return true;
@@ -887,15 +901,16 @@ function showPerformanceChartModal() {
         cells.forEach(c => {
             let attr = c.getAttribute('data-test-component') || '';
             if (attr.includes('_average') || attr.includes('internalMark')) return;
-            let spans = c.querySelectorAll('span');
-            if (spans.length >= 1) {
-                let g = parseInt(spans[0].innerText.trim());
-                if (!isNaN(g) && g >= 2 && g <= 5) {
-                    sGrades.push(g);
-                    counts[g]++;
-                    totalMarks++;
-                    sumMarks += g;
-                }
+            let clone = c.cloneNode(true);
+            clone.querySelectorAll('.visually-hidden, [aria-hidden="true"], [style*="display: none"]').forEach(el => el.remove());
+            let spans = clone.querySelectorAll('span');
+            let rawText = spans.length >= 1 ? spans[0].textContent.trim() : clone.textContent.trim();
+            let g = parseInt(rawText);
+            if (!isNaN(g) && g >= 2 && g <= 5) {
+                sGrades.push(g);
+                counts[g]++;
+                totalMarks++;
+                sumMarks += g;
             }
         });
 

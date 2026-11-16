@@ -22,7 +22,10 @@
 
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
         chrome.runtime.onMessage.addListener((req) => {
-            if (req.action === "updateSettings") syncVisitsSettings();
+            if (req.action === "updateSettings" && req.settings && req.settings.visitsScanner !== undefined) {
+                isVisitsEnabled = req.settings.visitsScanner !== false;
+                if (!isVisitsEnabled && visitsModal) visitsModal.style.display = 'none';
+            }
         });
     }
 
@@ -116,72 +119,7 @@
         }
     }
 
-    // 3. Резолвинг лицевого счета (contract_id / ispp_account)
-    async function resolveContractId(studentProfileId) {
-        if (!studentProfileId) return null;
-        const cacheKey = `MESH_STUDENT_ISPP_${studentProfileId}`;
-        const cached = window.sessionStorage.getItem(cacheKey);
-        if (cached) return cached;
-
-        const headers = getMeshHeaders("familyweb");
-
-        // Попытка через семейный профиль
-        try {
-            const res = await fetch('https://school.mos.ru/api/family/web/v1/profile', {
-                headers,
-                credentials: 'include'
-            });
-            if (res.ok) {
-                const data = await res.json();
-                if (data && data.children && Array.isArray(data.children)) {
-                    for (let child of data.children) {
-                        if (child.contract_id) {
-                            window.sessionStorage.setItem(`MESH_STUDENT_ISPP_${child.id}`, String(child.contract_id));
-                            if (String(child.id) === String(studentProfileId)) {
-                                return String(child.contract_id);
-                            }
-                        }
-                    }
-                    if (data.children.length === 1 && data.children[0].contract_id) {
-                        return String(data.children[0].contract_id);
-                    }
-                }
-            }
-        } catch(e) {}
-
-        return null;
-    }
-
-    // 4. Запрос проходов через турникеты (по dnevnik-mos-ru-api)
-    async function fetchVisits(contractId, fromDate, toDate) {
-        if (!contractId) return [];
-        const today = getMskDateStr();
-        const from = fromDate || today;
-        const to = toDate || today;
-        const cacheKey = `MESH_VISITS_${contractId}_${from}_${to}`;
-
-        const cached = window.sessionStorage.getItem(cacheKey);
-        if (cached) {
-            try { return JSON.parse(cached); } catch(e) {}
-        }
-
-        const headers = getMeshHeaders("familyweb");
-        const url = `https://school.mos.ru/api/family/web/v1/visits?from=${from}&to=${to}&contract_id=${contractId}`;
-
-        const res = await fetch(url, { headers, credentials: 'include' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const data = await res.json();
-        const payload = data.payload || [];
-
-        try {
-            window.sessionStorage.setItem(cacheKey, JSON.stringify(payload));
-        } catch(e) {}
-
-        return payload;
-    }
-
-    // 5. Формирование сводного статуса посещаемости ученика
+    // 3. Формирование сводного статуса посещаемости ученика
     function getStudentAttendanceSummary(studentProfileId) {
         const attendances = getOfficialAttendances(studentProfileId);
         const emias = getEmiasExemptions(studentProfileId);
@@ -251,8 +189,7 @@
                 </div>
                 
                 <div id="mesh-modal-tabs" style="padding: 10px 20px; background: #111827; border-bottom: 1px solid #1f2937; display: flex; gap: 8px; align-items: center;">
-                    <button id="mesh-tab-official" style="background: #2563eb; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">📋 Пропуски в МЭШ</button>
-                    <button id="mesh-tab-turnstile" style="background: #374151; color: #9ca3af; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">🚪 Турникеты</button>
+                    <button id="mesh-tab-official" style="background: #2563eb; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">📋 Пропуски и справки в МЭШ</button>
                 </div>
 
                 <div id="mesh-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;">
@@ -273,21 +210,16 @@
     }
 
     async function showStudentVisitsHistory(studentProfileId, studentName) {
+        if (!isVisitsEnabled) return;
         const modal = createVisitsModal();
         modal.style.display = 'flex';
 
         const nameEl = modal.querySelector('#mesh-modal-student-name');
         const bodyEl = modal.querySelector('#mesh-modal-body');
-        const tabOfficial = modal.querySelector('#mesh-tab-official');
-        const tabTurnstile = modal.querySelector('#mesh-tab-turnstile');
 
         nameEl.innerText = studentName || "Студент";
 
         function renderOfficial() {
-            tabOfficial.style.background = '#2563eb';
-            tabOfficial.style.color = '#fff';
-            tabTurnstile.style.background = '#374151';
-            tabTurnstile.style.color = '#9ca3af';
 
             const summary = getStudentAttendanceSummary(studentProfileId);
             let html = '';
@@ -380,117 +312,6 @@
             bodyEl.innerHTML = html;
         }
 
-        async function renderTurnstiles() {
-            tabTurnstile.style.background = '#2563eb';
-            tabTurnstile.style.color = '#fff';
-            tabOfficial.style.background = '#374151';
-            tabOfficial.style.color = '#9ca3af';
-
-            async function loadTurnstilesForContract(cid) {
-                bodyEl.innerHTML = `<div style="text-align: center; color: #9ca3af; padding: 30px 0; font-size: 13px;">⏳ Загрузка проходов через турникеты (Л/С: ${cid})...</div>`;
-                try {
-                    const visits = await fetchVisits(cid);
-                    if (!visits || visits.length === 0) {
-                        bodyEl.innerHTML = `
-                            <div style="text-align: center; color: #9ca3af; padding: 30px 20px; font-size: 13px;">
-                                <div style="font-size: 24px; margin-bottom: 8px;">🚪</div>
-                                По лицевому счету <b style="color: #60a5fa;">${cid}</b> проходов через турникеты не найдено.<br>
-                                <span style="font-size: 11px; color: #6b7280; display: inline-block; margin-top: 6px;">
-                                    (Проверьте корректность номера лицевого счета или период)
-                                </span>
-                                <div style="margin-top: 16px;">
-                                    <button id="mesh-btn-change-contract" style="background: #374151; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;">Изменить номер счета</button>
-                                </div>
-                            </div>
-                        `;
-                        const chBtn = bodyEl.querySelector('#mesh-btn-change-contract');
-                        if (chBtn) chBtn.onclick = () => renderInputForm(cid);
-                        return;
-                    }
-
-                    let html = `
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px;">
-                            <span style="color: #9ca3af;">Лицевой счет: <b style="color: #60a5fa;">${cid}</b></span>
-                            <button id="mesh-btn-change-contract" style="background: transparent; border: 1px solid #4b5563; color: #9ca3af; padding: 2px 8px; border-radius: 4px; font-size: 10px; cursor: pointer;">Изменить</button>
-                        </div>
-                    `;
-
-                    visits.forEach(day => {
-                        html += `
-                            <div style="background: #1f2937; border: 1px solid #374151; border-radius: 8px; padding: 10px; margin-bottom: 6px;">
-                                <div style="font-size: 12px; font-weight: 700; color: #93c5fd; margin-bottom: 4px;">📅 ${day.date}</div>
-                        `;
-                        (day.visits || []).forEach(v => {
-                            html += `
-                                <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0;">
-                                    <span style="color: #10b981; font-weight: 600;">Вход: ${v.in || '—'}</span>
-                                    <span style="color: ${v.out ? '#3b82f6' : '#f59e0b'}; font-weight: 600;">Выход: ${v.out || 'в здании'}</span>
-                                </div>
-                            `;
-                        });
-                        html += `</div>`;
-                    });
-
-                    bodyEl.innerHTML = html;
-
-                    const chBtn = bodyEl.querySelector('#mesh-btn-change-contract');
-                    if (chBtn) chBtn.onclick = () => renderInputForm(cid);
-                } catch(e) {
-                    bodyEl.innerHTML = `
-                        <div style="color: #ef4444; font-size: 12px; text-align: center; padding: 20px;">
-                            Ошибка загрузки турникетов: ${e.message}
-                            <div style="margin-top: 12px;">
-                                <button id="mesh-btn-change-contract" style="background: #374151; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;">Изменить номер счета</button>
-                            </div>
-                        </div>
-                    `;
-                    const chBtn = bodyEl.querySelector('#mesh-btn-change-contract');
-                    if (chBtn) chBtn.onclick = () => renderInputForm(cid);
-                }
-            }
-
-            function renderInputForm(initialVal = "") {
-                bodyEl.innerHTML = `
-                    <div style="padding: 24px 20px; background: #1f2937; border: 1px solid #374151; border-radius: 12px; text-align: center;">
-                        <div style="font-size: 26px; margin-bottom: 8px;">💳</div>
-                        <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Лицевой счет</div>
-                        <div style="font-size: 11px; color: #9ca3af; margin-bottom: 14px; line-height: 1.4; max-width: 380px; margin-left: auto; margin-right: auto;">
-                            Номер лицевого счета не всегда привязан в профиле МЭШ. Введите номер лицевого счета из личного кабинета mos.ru студента:
-                        </div>
-                        <div style="display: flex; gap: 8px; justify-content: center; max-width: 320px; margin: 0 auto;">
-                            <input type="text" id="mesh-input-contract" placeholder="Лицевой счет (напр. 1234567)" value="${initialVal}" style="background: #111827; border: 1px solid #4b5563; color: white; padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; flex: 1;">
-                            <button id="mesh-btn-save-contract" style="background: #2563eb; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer;">Найти</button>
-                        </div>
-                    </div>
-                `;
-
-                const input = bodyEl.querySelector('#mesh-input-contract');
-                const btn = bodyEl.querySelector('#mesh-btn-save-contract');
-
-                const handleSearch = () => {
-                    const val = (input.value || '').trim();
-                    if (!val) return alert("Введите номер лицевого счета");
-                    window.sessionStorage.setItem(`MESH_STUDENT_ISPP_${studentProfileId}`, val);
-                    loadTurnstilesForContract(val);
-                };
-
-                btn.onclick = handleSearch;
-                input.onkeydown = (e) => { if (e.key === 'Enter') handleSearch(); };
-            }
-
-            bodyEl.innerHTML = `<div style="text-align: center; color: #9ca3af; padding: 30px 0; font-size: 13px;">⏳ Поиск лицевого счета...</div>`;
-
-            const contractId = await resolveContractId(studentProfileId);
-            if (!contractId) {
-                renderInputForm();
-            } else {
-                loadTurnstilesForContract(contractId);
-            }
-        }
-
-        tabOfficial.onclick = renderOfficial;
-        tabTurnstile.onclick = renderTurnstiles;
-
         // По умолчанию открываем официальные пропуски
         renderOfficial();
     }
@@ -527,8 +348,6 @@
         getEmiasExemptions,
         getStudentAttendanceSummary,
         getTodayAbsentProfiles,
-        resolveContractId,
-        fetchVisits,
         showStudentVisitsHistory
     };
 })();

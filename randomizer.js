@@ -33,14 +33,7 @@
         if (data && data.randomizerMode === false) isEnabled = false;
     });
 
-    chrome.runtime.onMessage.addListener((req) => {
-        if (req.action === "updateSettings" && req.settings.randomizerMode !== undefined) {
-            isEnabled = req.settings.randomizerMode;
-        }
-    });
-
-    // ⚡ Постоянно проверяем URL, чтобы кнопка показывалась ТОЛЬКО в журнале
-    document.addEventListener('SpeedmeshDOMReady', () => {
+    function syncVisibility() {
         const btn = document.getElementById('mesh-randomizer-btn');
         const isJournal = window.location.href.includes('journal');
 
@@ -50,7 +43,17 @@
         } else {
             if (btn) btn.style.display = 'none';
         }
+    }
+
+    chrome.runtime.onMessage.addListener((req) => {
+        if (req.action === "updateSettings" && req.settings && req.settings.randomizerMode !== undefined) {
+            isEnabled = req.settings.randomizerMode;
+            syncVisibility();
+        }
     });
+
+    // ⚡ Постоянно проверяем URL, чтобы кнопка показывалась ТОЛЬКО в журнале
+    document.addEventListener('SpeedmeshDOMReady', syncVisibility);
 
     function initRandomizer() {
         if (document.getElementById('mesh-randomizer-btn')) return;
@@ -143,7 +146,7 @@
                 
                 let row = winnerCell.closest('tr');
                 let rowKey = row ? row.getAttribute('data-row-key') : null;
-                let targetRows = rowKey ? Array.from(document.querySelectorAll(`tr[data-row-key="${rowKey}"]`)) : [row];
+                let targetRows = rowKey ? Array.from(document.querySelectorAll(`tr[data-row-key="${rowKey}"]`)) : (row ? [row] : []);
 
                 targetRows.forEach(tr => {
                     Array.from(tr.querySelectorAll('td, th')).forEach(td => lastTargetCells.push(td));

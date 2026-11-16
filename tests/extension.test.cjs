@@ -141,12 +141,20 @@ test('KTP runs finish and recalc in background, hides outside planning and retai
     assert.equal(s.w.getComputedStyle(panel).display, 'none');
 });
 
-test('timer starts in bottom-right despite old saved position and settings open above it', t => {
+test('timer starts in bottom-center dock despite old saved position and settings open above it', t => {
     const s = setup(t);
     s.w.chrome.storage.local.get = (keys, cb) => cb({ timerLeft: '100px', timerTop: '10px' });
-    s.load('timer.js'); s.tick(1000);
+    s.load('task_center.js'); s.load('timer.js'); s.tick(1000);
+    const dock = s.w.document.getElementById('mesh-bottom-dock');
     const card = s.w.document.getElementById('mesh-timer-card');
-    assert.equal(card.style.right, '20px'); assert.equal(card.style.bottom, '20px'); assert.equal(card.style.top, '');
+    const tc = s.w.document.getElementById('mesh-task-center');
+    assert.equal(dock.style.left, '50%');
+    assert.equal(dock.style.transform, 'translateX(-50%)');
+    assert.equal(dock.style.bottom, '6px');
+    assert.equal(dock.style.display, 'flex');
+    assert.equal(card.parentElement, dock);
+    assert.equal(tc.parentElement, dock);
+    assert.equal(card.style.top, '');
     assert.equal(s.w.document.getElementById('mesh-timer-settings-panel').style.bottom, '110%');
 });
 

@@ -73,7 +73,6 @@
         "absences.js",
         "homework.js",
         "ktp.js",
-        "ktp_injector.js",
         "timer.js",
         "calculator.js",
         "sticky_avg.js",
@@ -95,8 +94,6 @@
         "ktp_interceptor.js",
         "api_spy.js",
         "guide.html",
-        "gallery.html",
-        "auto_ktp.js",
         "ghost_mode.js"
       ],
       "matches": [

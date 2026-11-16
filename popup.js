@@ -137,10 +137,12 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => toast.classList.remove('show'), 1500);
     }
 
-    function notifyContentScript(message) {
+    function notifyContentScript(message, warnOnOtherTab = false) {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0] && tabs[0].url.includes('mos.ru')) {
+            if (tabs[0]?.url?.includes('mos.ru')) {
                 chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
+            } else if (warnOnOtherTab) {
+                showToast("⚠️ Откройте вкладку МЭШ!");
             }
         });
     }
@@ -158,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (key === 'autoGrader' || key === 'architectMode') {
                     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                        if (tabs[0] && tabs[0].url.includes('mos.ru')) {
+                        if (tabs[0]?.url?.includes('mos.ru')) {
                             chrome.tabs.reload(tabs[0].id);
                         }
                     });
@@ -216,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('refreshPageBtn')?.addEventListener('click', () => {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0] && tabs[0].url.includes('mos.ru')) {
+            if (tabs[0]?.url?.includes('mos.ru')) {
                 chrome.tabs.reload(tabs[0].id);
             }
         });
@@ -244,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     document.getElementById('btn-trophies')?.addEventListener('click', () => { 
-        notifyContentScript({ action: 'showTrophies' }); 
+        notifyContentScript({ action: 'showTrophies' }, true); 
     });
 
     document.getElementById('btn-rollback')?.addEventListener('click', async () => {
@@ -255,7 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast("🔄 Откат завершен!");
             setTimeout(() => {
                 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                    if (tabs[0] && tabs[0].url.includes('mos.ru')) {
+                    if (tabs[0]?.url?.includes('mos.ru')) {
                         chrome.tabs.reload(tabs[0].id);
                     }
                 });
@@ -273,16 +275,23 @@ document.addEventListener('DOMContentLoaded', () => {
             dateInput.value = result.fakeDate || new Date().toISOString().split('T')[0];
         });
 
-        const runOnPage = (func, arg) => {
+        const runOnPage = (func, arg, toastText) => {
             chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                if (!tabs[0]?.id) return;
+                if (!tabs[0]?.id || !tabs[0]?.url?.includes('mos.ru')) {
+                    showToast("⚠️ Откройте вкладку МЭШ!");
+                    return;
+                }
                 chrome.scripting.executeScript({
                     target: { tabId: tabs[0].id },
                     world: 'MAIN',
                     func: func,
                     args: arg ? [arg] : []
                 }, () => {
-                    showToast("✅ Дата применена!");
+                    if (chrome.runtime.lastError) {
+                        showToast("❌ Ошибка: " + chrome.runtime.lastError.message);
+                        return;
+                    }
+                    showToast(toastText);
                     setTimeout(() => {
                         chrome.tabs.reload(tabs[0].id, () => window.close());
                     }, 500);
@@ -294,26 +303,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const selectedDate = dateInput.value;
             if (selectedDate) {
                 chrome.storage.local.set({ fakeDate: selectedDate }, () => {
-                    runOnPage((val) => { window.localStorage.setItem('__mesh_spoofed_date', val); }, selectedDate);
+                    runOnPage((val) => { window.localStorage.setItem('__mesh_spoofed_date', val); }, selectedDate, "✅ Дата применена!");
                 });
             }
         });
 
         resetDateBtn.addEventListener('click', () => {
             chrome.storage.local.remove('fakeDate', () => {
-                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                    if (!tabs[0]?.id) return;
-                    chrome.scripting.executeScript({
-                        target: { tabId: tabs[0].id },
-                        world: 'MAIN',
-                        func: () => { window.localStorage.removeItem('__mesh_spoofed_date'); }
-                    }, () => {
-                        showToast("🔄 Дата сброшена!");
-                        setTimeout(() => {
-                            chrome.tabs.reload(tabs[0].id, () => window.close());
-                        }, 500);
-                    });
-                });
+                runOnPage(() => { window.localStorage.removeItem('__mesh_spoofed_date'); }, null, "🔄 Дата сброшена!");
             });
         });
     }

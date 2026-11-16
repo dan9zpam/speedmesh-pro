@@ -6,17 +6,20 @@
 
   // Слушатель для обновления даты из расширения
   window.addEventListener('message', (event) => {
-    if (event.data?.type === 'SET_MESH_DATE') {
-      window.localStorage.setItem('__mesh_spoofed_date', event.data.value);
-    }
+    if (event.source !== window || event.data?.type !== 'SET_MESH_DATE') return;
+    window.localStorage.setItem('__mesh_spoofed_date', event.data.value);
   });
 
   if (!spoofedDateStr) return;
 
   const targetDate = new RealDate(spoofedDateStr + 'T10:00:00');
+  if (Number.isNaN(targetDate.getTime())) return;
   const timeOffset = targetDate.getTime() - RealDate.now();
 
   function MockDate(...args) {
+    if (!(this instanceof MockDate)) {
+      return new RealDate(RealDate.now() + timeOffset).toString();
+    }
     if (args.length === 0) {
       return new RealDate(RealDate.now() + timeOffset);
     }

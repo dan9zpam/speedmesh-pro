@@ -49,8 +49,8 @@
 
     // 2. Слушаем переключатель из меню расширения в реальном времени
     chrome.runtime.onMessage.addListener((req) => {
-        if (req.action === "updateSettings" && req.settings !== undefined) {
-            toggleTurboMode(req.settings.speedUp);
+        if (req.action === "updateSettings" && req.settings && req.settings.speedUp !== undefined) {
+            toggleTurboMode(Boolean(req.settings.speedUp));
         }
     });
 })();

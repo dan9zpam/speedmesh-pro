@@ -8,7 +8,7 @@
 
     // Слушаем тумблер в реальном времени
     chrome.runtime.onMessage.addListener((req) => {
-        if (req.action === "updateSettings" && req.settings !== undefined) {
+        if (req.action === "updateSettings" && req.settings && req.settings.apiSpyMode !== undefined) {
             window.sessionStorage.setItem('MESH_SPY_ENABLED', req.settings.apiSpyMode ? 'true' : 'false');
             // Сигнализируем шпиону, что настройка изменилась
             window.dispatchEvent(new CustomEvent('MESH_SPY_TOGGLE'));
@@ -22,9 +22,3 @@
         (document.head || document.documentElement).appendChild(s);
     } catch (e) {}
 })();
-    try {
-        const autoKtp = document.createElement('script');
-        autoKtp.src = chrome.runtime.getURL('auto_ktp.js');
-        autoKtp.onload = function() { this.remove(); };
-        (document.head || document.documentElement).appendChild(autoKtp);
-    } catch (e) {}

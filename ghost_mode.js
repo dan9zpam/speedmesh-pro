@@ -33,9 +33,10 @@
     // 2. ПЕРЕХВАТ СТАРЫХ ЗАПРОСОВ (XHR)
     const originalXHROpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        this._isBlocked = blockedSignatures.some(signature => url.includes(signature));
+        const urlStr = typeof url === 'string' ? url : String(url || '');
+        this._isBlocked = blockedSignatures.some(signature => urlStr.includes(signature));
         if (this._isBlocked) {
-            console.log(`%c🛡️ Ghost Mode убил XHR трекер: ${url.split('?')[0]}`, "color: #94a3b8; font-size: 10px;");
+            console.log(`%c🛡️ Ghost Mode убил XHR трекер: ${urlStr.split('?')[0]}`, "color: #94a3b8; font-size: 10px;");
             // Направляем запрос в пустоту
             return originalXHROpen.apply(this, [method, 'about:blank', ...rest]);
         }

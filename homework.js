@@ -292,7 +292,8 @@
             const result = await processLesson(card);
             results.push(`Пара ${index + 1}: ${result}`);
             if (result === 'Дата сохранена') selectedPairs.delete(pairKey);
-            if (result.includes('не открылся') || result.includes('не удалось')) {
+            const lowerResult = result.toLowerCase();
+            if (lowerResult.includes('не открылся') || lowerResult.includes('не удалось')) {
                 stoppedEarly = true;
                 break;
             }

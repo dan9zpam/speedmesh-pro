@@ -15,6 +15,7 @@
     document.head.appendChild(style);
 
     let tooltip = null;
+    let isCalcEnabled = true;
 
     function createTooltip() {
         if (tooltip) return;
@@ -129,6 +130,7 @@
                 }
                 
                 cell.addEventListener('mouseenter', (e) => {
+                    if (!isCalcEnabled) return;
                     e.stopPropagation();
                     showTooltip(e, text, cell.closest('tr'));
                 });
@@ -138,12 +140,32 @@
         });
     }
 
+    function applyCalcState(enabled) {
+        isCalcEnabled = enabled;
+        if (enabled) {
+            document.querySelectorAll('[data-calc-attached]').forEach(cell => {
+                cell.style.cursor = "help";
+                cell.style.borderBottom = "1px dashed #8b5cf6";
+            });
+            attachListeners();
+        } else {
+            hideTooltip();
+            document.querySelectorAll('[data-calc-attached]').forEach(cell => {
+                cell.style.cursor = "";
+                cell.style.borderBottom = "";
+            });
+        }
+    }
+
+    chrome.runtime.onMessage.addListener((req) => {
+        if (req.action === "updateSettings" && req.settings && req.settings.calculatorMode !== undefined) {
+            applyCalcState(req.settings.calculatorMode !== false);
+        }
+    });
 
     function initCalc() {
         chrome.storage.sync.get(['calculatorMode'], (data) => {
-            if (data.calculatorMode !== false) {
-                attachListeners();
-            }
+            applyCalcState(data.calculatorMode !== false);
         });
     }
 

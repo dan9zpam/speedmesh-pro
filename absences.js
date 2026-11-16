@@ -30,6 +30,10 @@
     `;
     document.body.appendChild(tooltip);
 
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
     function parseStudentRow(row, targetElement) {
         let stats = { 
             n: 0, 
@@ -135,10 +139,11 @@
             const name = getStudentName(row);
             const studentId = getStudentProfileId(row);
             activeTooltipStudentId = studentId;
+            const visitsEnabled = !!(studentId && window.MeshVisitsAPI?.isEnabled?.());
 
             tooltip.innerHTML = `
                 <div style="font-size:10px; text-transform:uppercase; color:#9ca3af; margin-bottom:8px; letter-spacing:1px;">Профиль ученика</div>
-                <div style="font-weight:700; font-size:15px; margin-bottom:12px; color:#fff; border-bottom:1px solid #374151; padding-bottom:8px;">${name}</div>
+                <div style="font-weight:700; font-size:15px; margin-bottom:12px; color:#fff; border-bottom:1px solid #374151; padding-bottom:8px;">${escapeHtml(name)}</div>
                 
                 <div style="display:grid; grid-template-columns: 1fr auto; gap:8px; font-size:13px;">
                     <span style="color:#d1d5db;">Взвешенный балл:</span>
@@ -154,11 +159,13 @@
                     <b style="color:#fff;">${stats.weightTotal}</b>
                 </div>
 
+                ${visitsEnabled ? `
                 <div id="mesh-tooltip-attendance-row" style="margin-top:10px; padding-top:8px; border-top:1px solid #374151; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
                     <span style="color:#9ca3af;">Сегодня в МЭШ:</span>
                     <b id="mesh-tooltip-visits-status" style="color:#10b981; font-size:12px;">Присутствует</b>
                 </div>
                 <div style="font-size:9px; color:#60a5fa; margin-top:4px; text-align:right;">Shift + Клик: полное досье пропусков</div>
+                ` : ''}
                 
                 <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #374151; font-size:10px; color:#6b7280; line-height:1.2;">
                     Расчет: (Оценка × Вес) / Сумма весов.<br>Игнорируются системные итоги.
@@ -167,7 +174,7 @@
             tooltip.style.display = 'block';
 
             // Проверяем официальные пропуски и ЕМИАС из МЭШ
-            if (studentId && window.MeshVisitsAPI) {
+            if (visitsEnabled) {
                 const summary = window.MeshVisitsAPI.getStudentAttendanceSummary(studentId);
                 const statusEl = document.getElementById('mesh-tooltip-visits-status');
                 if (statusEl && summary) {
@@ -185,7 +192,7 @@
         if (!row) return;
 
         const isNameArea = e.target.closest('td:first-child') || e.target.hasAttribute('title');
-        if (isNameArea && window.MeshVisitsAPI) {
+        if (isNameArea && window.MeshVisitsAPI?.isEnabled?.()) {
             const studentId = getStudentProfileId(row);
             const name = getStudentName(row);
             if (studentId) {
